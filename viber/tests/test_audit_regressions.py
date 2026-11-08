@@ -40,11 +40,42 @@ class CacheIntegrityTests(unittest.TestCase):
             mod.analyze(self.args, self.msgs)
         self.assertFalse((self.root / 'run_config.json').exists())
 
+    def test_corrupt_run_config_is_an_expected_analysis_error(self):
+        path = self.root / 'run_config.json'
+        path.write_text('{', encoding='utf-8')
+        with self.assertRaisesRegex(mod.AnalysisError, 'Invalid run configuration'):
+            mod.read_run_config(path)
+
 class ExportRobustnessTests(unittest.TestCase):
-    def test_invalid_unicode_is_rejected_without_echoing_text(self):
-        for value in ('prefix\x00suffix', 'prefix\ud800suffix'):
-            with self.subTest(value=repr(value)), self.assertRaisesRegex(ValueError, 'NUL or an unpaired'):
-                mod.build_messages({}, {'messages': [{'kind': 'text', 'text': value}]})
+    def test_nul_is_preserved_and_surrogates_identify_the_message_without_text(self):
+        messages = mod.build_messages({}, {'id': 7, 'messages': [{'kind': 'text', 'text': 'a\x00b'}]})
+        self.assertEqual(messages[0]['text'], 'a\x00b')
+        with self.assertRaises(mod.AnalysisError) as caught:
+            mod.build_messages({}, {'id': 7, 'messages': [{'kind': 'text', 'text': 'secret\ud800'}]})
+        self.assertIn('Chat \'7\', message index 0: text', str(caught.exception))
+        self.assertNotIn('secret', str(caught.exception))
+
+    def test_other_chats_and_unused_contacts_do_not_block_the_selected_chat(self):
+        data = {'format': 'viberpc-export', 'version': 1,
+                'contacts': {'9': {'name': 'unused\ud800'}},
+                'chats': [{'id': 1, 'messages': [{'kind': 'text', 'text': 'synthetic'}]},
+                          {'id': 2, 'messages': [{'kind': 'text', 'text': 'bad\ud800'}]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'export.json'
+            path.write_text(json.dumps(data), encoding='utf-8')
+            read, _ = mod.read_export(path)
+            self.assertEqual(len(mod.list_chats(read)), 2)
+            self.assertEqual(mod.build_messages(read, read['chats'][0])[0]['text'], 'synthetic')
+            with self.assertRaisesRegex(mod.AnalysisError, "Chat '2', message index 0"):
+                mod.build_messages(read, read['chats'][1])
+
+    def test_used_contact_surrogate_is_reported_without_its_name(self):
+        data = {'contacts': {'2': {'name': 'secret\ud800'}}}
+        chat = {'id': 1, 'messages': [{'kind': 'text', 'text': 'synthetic', 'authorId': 2}]}
+        with self.assertRaises(mod.AnalysisError) as caught:
+            mod.build_messages(data, chat)
+        self.assertIn("Chat '1', message index 0: name", str(caught.exception))
+        self.assertNotIn('secret', str(caught.exception))
 
     def test_wrong_collection_types_have_clear_errors(self):
         with self.assertRaisesRegex(ValueError, 'contactIds must be a list'):
@@ -91,7 +122,6 @@ class SurvivorRegressions(CacheIntegrityTests):
 
 class InterruptTests(unittest.TestCase):
     def test_sigint_during_completion_exits_130_and_caches_inflight(self):
-        import os
         import signal
         from unittest.mock import patch
         from test_viber_analyze import FakeClient
@@ -102,12 +132,13 @@ class InterruptTests(unittest.TestCase):
             messages = fake_msgs(4)
             original_wait = mod.wait
             def interrupt_then_wait(*a, **kw):
-                os.kill(os.getpid(), signal.SIGINT)
+                signal.raise_signal(signal.SIGINT)
                 return original_wait(*a, **kw)
-            with quiet(), patch.object(mod, 'wait', side_effect=interrupt_then_wait):
+            with quiet() as (_out, err), patch.object(mod, 'wait', side_effect=interrupt_then_wait):
                 with self.assertRaises(SystemExit) as caught:
                     mod.analyze(args, messages, client=FakeClient(lambda p: []))
             self.assertEqual(caught.exception.code, 130)
+            self.assertEqual(err.getvalue().count('Interrupted: finishing active requests'), 1)
             self.assertTrue((args.output / 'batches' / 'batch-00001.json').exists())
             self.assertFalse((args.output / 'batches' / 'batch-00002.json').exists())
 
@@ -124,6 +155,40 @@ class PrivacyTests(unittest.TestCase):
                 mod.analyze(args, fake_msgs(2), client=FakeClient(fail))
             self.assertNotIn('synthetic secret', out.getvalue() + err.getvalue())
             self.assertIn('RuntimeError', err.getvalue())
+
+    def test_batch_format_details_and_http_status_are_safe_and_useful(self):
+        class ApiError(Exception):
+            status_code = 429
+        cases = [(mod.BatchFormatError("Invalid JSON: Expecting ',' delimiter at character 8"),
+                  "Invalid JSON: Expecting ',' delimiter at character 8"),
+                 (ApiError('secret content'), 'HTTP 429')]
+        for exc, expected in cases:
+            with self.subTest(expected=expected):
+                summary = mod.batch_error_summary(exc)
+                self.assertIn(expected, summary)
+                self.assertNotIn('secret content', summary)
+
+    def test_worker_logs_batch_format_details_and_http_status(self):
+        from unittest.mock import patch
+        class ApiError(Exception):
+            status_code = 429
+        for exc, expected in [(mod.BatchFormatError('Invalid JSON at character 8'), 'Invalid JSON at character 8'),
+                              (ApiError('secret content'), 'HTTP 429')]:
+            with tempfile.TemporaryDirectory() as tmp, quiet() as (_out, err), \
+                 patch.object(mod, 'request_batch', side_effect=exc):
+                args = types.SimpleNamespace(workers=1)
+                mod.run_tasks(None, args, [], [(0, 0, 1, 1)], [(1, 0, 0, 1, 1)], Path(tmp))
+                self.assertIn(expected, err.getvalue())
+                self.assertNotIn('secret content', err.getvalue())
+
+    def test_incomplete_details_do_not_leak_response_content(self):
+        from test_viber_analyze import FakeClient, FakeResponse
+        response = FakeResponse('', status='incomplete', details=types.SimpleNamespace(reason='secret content'))
+        args = types.SimpleNamespace(sender='s', model='test', context=0)
+        with quiet(), self.assertRaises(mod.BatchFormatError) as caught:
+            mod.request_batch(FakeClient(lambda _: response), args, fake_msgs(1), (1, 0, 0, 1, 1))
+        self.assertNotIn('secret content', mod.batch_error_summary(caught.exception))
+        self.assertIn('status=incomplete', str(caught.exception))
 
 class SenderListingTests(unittest.TestCase):
     def test_sender_listing_groups_and_limits_names(self):
@@ -152,3 +217,19 @@ class ReadExportRobustnessTests(unittest.TestCase):
                                         'chats': [{'id': 1, 'messages': 5}]}), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'chat.messages must be a list'):
                 mod.read_export(path)
+
+    def test_unexpected_value_error_is_not_hidden_by_cli_wrapper(self):
+        import subprocess
+        import sys
+        script = Path(mod.__file__).resolve()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'synthetic.json'
+            path.write_text('{}', encoding='utf-8')
+            code = ("import json,runpy,sys; "
+                    "json.loads=lambda *a,**k: (_ for _ in ()).throw(ValueError('synthetic bug')); "
+                    f"sys.argv=[{str(script)!r},'--input',{str(path)!r},'--list-chats']; "
+                    f"runpy.run_path({str(script)!r},run_name='__main__')")
+            result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Traceback', result.stderr)
+            self.assertIn('ValueError: synthetic bug', result.stderr)

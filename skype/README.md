@@ -57,7 +57,7 @@ Completed batches are cached. A restart avoids rerunning them and paying twice. 
 
 - `report.html`: readable report with the original quotations, dates, categories and adjacent message context
 - `report.md`: equivalent Markdown report suitable for Logseq, searching and LLM uploads
-- `findings.csv`: Excel-ready UTF-8 CSV
+- `findings.csv`: UTF-8 CSV for spreadsheet import
 - `findings.json`: structured, verified findings including surrounding message context
 - `rejected_findings.json`: model candidates rejected because their reference or exact quote did not match
 - `summary.json`: message coverage and API usage reported by the service
@@ -77,6 +77,8 @@ To reconstruct reports without calling the API again, supply the same options pl
 7. **Cost:** each uncached batch uses billable OpenAI API tokens. Token usage is accumulated in `summary.json`. Costs depend on the selected model and API pricing.
 8. **Data safety:** the original source and analysis results contain personal information. Restrict local access and do not publish these files.
 9. **Conservative output verification:** if the model alters a quotation, the finding is rejected and preserved separately for manual inspection. Such rejection is not proof that the underlying message is innocuous.
+10. **Spreadsheet formulas:** CSV fields preserve source data, so a value beginning with `=`, `+`, `-`, or `@` may be interpreted as a formula by spreadsheet software. Import those fields as text or use the JSON output.
+11. **Markdown HTML:** `report.md` preserves untrusted text, which may include raw HTML. Use a Markdown viewer that sanitizes HTML, or open the escaped `report.html` instead.
 
 ## Backlinks to original exported conversation
 

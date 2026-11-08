@@ -89,7 +89,13 @@ not a legal assessment, photos, voice messages and files are not analysed, a mes
 tokens (and failed attempts are billed but missing from `summary.json`), and the verbatim-quote
 check rejects altered quotes. The export and the output folders contain personal information:
 do not publish them. Also specific to Viber: Viber reactions and edit history are not part of
-the analysis.
+the analysis. If messages share a Viber ID, their ChatLens links can be ambiguous; use their
+distinct `history.html` links to inspect them.
+
+CSV fields retain their original values: spreadsheet software may interpret values beginning
+with `=`, `+`, `-`, or `@` as formulas. Import them as text or use JSON. `report.md` may contain
+raw HTML from untrusted text; use a Markdown viewer that sanitizes HTML, or open the escaped
+`report.html` instead.
 
 ## Tests
 

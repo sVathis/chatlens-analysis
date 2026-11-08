@@ -151,6 +151,9 @@ def write_json(path, obj):
     temp.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding='utf-8')
     temp.replace(path)
 
+class AnalysisError(ValueError):
+    """An expected input or cache error safe to show without a traceback."""
+
 def read_cached_batch(path, number, start, end, msgs, sender):
     """Reject corrupt or mismatched cache records before counting coverage."""
     try:
@@ -169,11 +172,25 @@ def read_cached_batch(path, number, start, end, msgs, sender):
     except (OSError, UnicodeError, ValueError):
         valid = False
     if not valid:
-        raise ValueError(f'Invalid cached batch {path}; remove it and rerun to retry that batch.')
+        raise AnalysisError(f'Invalid cached batch {path}; remove it and rerun to retry that batch.')
     return record
+
+def read_run_config(path):
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AnalysisError(f'Invalid run configuration {path}.') from exc
 
 class BatchFormatError(ValueError):
     """Response was incomplete, empty, or not valid structured JSON."""
+
+def batch_error_summary(exc):
+    """Keep useful diagnostics without logging arbitrary client exception text."""
+    if isinstance(exc, BatchFormatError):
+        return f'BatchFormatError: {exc}'
+    status = getattr(exc, 'status_code', None)
+    suffix = f' (HTTP {status})' if type(status) is int and 100 <= status <= 599 else ''
+    return type(exc).__name__ + suffix
 
 
 def request_batch(client, args, msgs, batch):
@@ -213,8 +230,11 @@ def request_batch(client, args, msgs, batch):
                 status = getattr(response, 'status', 'completed')
                 details = getattr(response, 'incomplete_details', None)
                 if status != 'completed':
+                    safe_status = status if status in ('incomplete', 'failed', 'cancelled', 'queued', 'in_progress') else 'unknown'
+                    reason = getattr(details, 'reason', None)
+                    safe_reason = reason if reason in ('max_output_tokens', 'content_filter') else 'unknown'
                     raise BatchFormatError(
-                        f'Response status={status}; incomplete_details={details}')
+                        f'Response status={safe_status}; incomplete reason={safe_reason}')
                 if not response.output_text:
                     raise BatchFormatError('Empty model response')
                 try:
@@ -279,12 +299,12 @@ def analyze(args, msgs):
                            args.batch_size, args.context)
     meta_path = root / 'run_config.json'
     if meta_path.exists():
-        existing = json.loads(meta_path.read_text(encoding='utf-8'))
+        existing = read_run_config(meta_path)
         if existing != expected:
             sys.exit('Configuration/source changed. Choose a NEW --output directory to prevent mixing results.')
     else:
         if any(cache.glob('batch-*.json')):
-            raise ValueError('Cached batches exist without run_config.json; choose a new --output directory.')
+            raise AnalysisError('Cached batches exist without run_config.json; choose a new --output directory.')
         write_json(meta_path, expected)
 
     batches = plan_batches(msgs, args.batch_size, args.context)
@@ -359,9 +379,9 @@ def analyze(args, msgs):
                             print(f'Completed batch {number}/{len(batches)} '
                                   f'({completed}/{len(tasks)} new)', flush=True)
                         except Exception as exc:
-                            # Exception messages can contain request or response text.
-                            failures.append((number, type(exc).__name__))
-                            print(f'ERROR batch {number}: {type(exc).__name__}', file=sys.stderr,
+                            detail = batch_error_summary(exc)
+                            failures.append((number, detail))
+                            print(f'ERROR batch {number}: {detail}', file=sys.stderr,
                                   flush=True)
                         # Keep the number of active requests bounded; stop
                         # scheduling new work after the first terminal failure.
@@ -568,7 +588,7 @@ def main():
     if not any(m['sender']==args.sender for m in msgs): ap.error('No messages found for this exact --sender ID')
     if args.report_only:
         if not args.output.exists(): ap.error('Output directory does not exist')
-        meta=json.loads((args.output/'run_config.json').read_text(encoding='utf-8'))
+        meta=read_run_config(args.output/'run_config.json')
         if meta != fingerprint(args.input,args.sender,args.model,args.batch_size,args.context):
             ap.error('Run config/source differs from cached analysis')
         make_report(args,msgs,plan_batches(msgs,args.batch_size,args.context))
@@ -577,5 +597,5 @@ def main():
 if __name__=='__main__':
     try:
         main()
-    except ValueError as exc:
+    except AnalysisError as exc:
         sys.exit(str(exc))

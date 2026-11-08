@@ -31,6 +31,7 @@ import html
 import json
 import os
 import random
+import re
 import signal
 import sys
 import threading
@@ -115,6 +116,13 @@ SCHEMA = {
 # ---------------------------------------------------------------- reading the export
 
 
+class AnalysisError(ValueError):
+    """An expected input or cache error that is safe to show without a traceback."""
+
+
+SURROGATE = re.compile(r"[\ud800-\udfff]")
+
+
 def iso_time(ms):
     """Epoch milliseconds as an ISO UTC time (``2023-11-14T22:13:20.000Z``), or ''."""
     if isinstance(ms, bool) or not isinstance(ms, (int, float)):
@@ -133,39 +141,23 @@ def read_export(path):
     try:
         data = json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{path} is not valid JSON ({exc.__class__.__name__})") from exc
+        raise AnalysisError(f"{path} is not valid JSON ({exc.__class__.__name__})") from exc
     if (
         not isinstance(data, dict)
         or data.get("format") != EXPORT_FORMAT
         or not isinstance(data.get("chats"), list)
     ):
-        raise ValueError("Expected a viber_export.json written by ViberPC-Export")
+        raise AnalysisError("Expected a viber_export.json written by ViberPC-Export")
     version = data.get("version")
     if isinstance(version, bool) or not isinstance(version, int) or not 1 <= version <= SUPPORTED_VERSION:
-        raise ValueError(
+        raise AnalysisError(
             f"Unsupported Viber export version {version!r}: this script reads version "
             f"{SUPPORTED_VERSION}. Update ChatLens, or export again with a matching ViberPC-Export."
         )
-    validate_export_strings(data)
     for chat in data["chats"]:
         if isinstance(chat, dict) and chat.get("messages") is not None and not isinstance(chat["messages"], list):
-            raise ValueError("Export chat.messages must be a list.")
+            raise AnalysisError("Export chat.messages must be a list.")
     return data, hashlib.sha256(raw).hexdigest()
-
-
-def validate_export_strings(value):
-    """Reject strings that cannot be safely written as UTF-8 HTML or JSON."""
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, str):
-            if "\x00" in item or any(0xD800 <= ord(ch) <= 0xDFFF for ch in item):
-                raise ValueError("Export contains NUL or an unpaired Unicode surrogate.")
-        elif isinstance(item, dict):
-            pending.extend(item.keys())
-            pending.extend(item.values())
-        elif isinstance(item, list):
-            pending.extend(item)
 
 
 def list_chats(data):
@@ -178,6 +170,8 @@ def list_chats(data):
         chat_id = f"viber:{chat.get('id')}"
         kind = str(chat.get("type") or "")
         title = str(chat.get("title") or "")
+        if any(SURROGATE.search(value) for value in (chat_id, kind, title)):
+            raise AnalysisError("A chat listing field contains an unpaired Unicode surrogate.")
         lines.append(f"{count:>7}  {chat_id:<14} {kind:<10} {title}")
     return lines
 
@@ -188,13 +182,13 @@ def find_chat(data, wanted):
     if not wanted:
         if len(chats) == 1:
             return chats[0]
-        raise ValueError(f"The export holds {len(chats)} chats: pass --chat (see --list-chats).")
+        raise AnalysisError(f"The export holds {len(chats)} chats: pass --chat (see --list-chats).")
     wanted = wanted.strip()
     if wanted.startswith("viber:"):
         wanted = wanted[len("viber:"):]
     matches = [c for c in chats if str(c.get("id")) == wanted]
     if len(matches) != 1:
-        raise ValueError(f"Found {len(matches)} chats with id {wanted!r} (see --list-chats).")
+        raise AnalysisError(f"Found {len(matches)} chats with id {wanted!r} (see --list-chats).")
     return matches[0]
 
 
@@ -221,11 +215,13 @@ def build_messages(data, chat):
     """
     contacts = data.get("contacts") if isinstance(data.get("contacts"), dict) else {}
     self_info = data.get("self") if isinstance(data.get("self"), dict) else {}
-    validate_export_strings([contacts, self_info, chat])
     if not isinstance(self_info.get("contactIds") or [], list):
-        raise ValueError("Export self.contactIds must be a list.")
+        raise AnalysisError("Export self.contactIds must be a list.")
     if not isinstance(chat.get("messages") or [], list):
-        raise ValueError("Export chat.messages must be a list.")
+        raise AnalysisError("Export chat.messages must be a list.")
+    chat_id = "" if chat.get("id") is None else str(chat["id"])
+    if SURROGATE.search(chat_id):
+        raise AnalysisError("Selected chat ID contains an unpaired Unicode surrogate.")
     self_ids = {str(contact_id) for contact_id in self_info.get("contactIds") or []}
     self_name = str(self_info.get("name") or self_info.get("number") or SELF_ID)
 
@@ -252,19 +248,24 @@ def build_messages(data, chat):
         reply = msg.get("replyTo")
         reply_text = reply.get("text") if isinstance(reply, dict) else None
         message_id = msg.get("id")
-        messages.append(
-            {
-                "key": f"m{index:07d}",
-                "source_index": index,
-                "viber_id": "" if message_id is None else str(message_id),
-                "sender": sender,
-                "name": name,
-                "time": iso_time(msg.get("timestamp")),
-                "kind": kind,
-                "text": message_text(msg),
-                "reply_to": reply_text if isinstance(reply_text, str) else "",
-            }
-        )
+        message = {
+            "key": f"m{index:07d}",
+            "source_index": index,
+            "viber_id": "" if message_id is None else str(message_id),
+            "sender": sender,
+            "name": name,
+            "time": iso_time(msg.get("timestamp")),
+            "kind": kind,
+            "text": message_text(msg),
+            "reply_to": reply_text if isinstance(reply_text, str) else "",
+        }
+        for field, value in message.items():
+            if isinstance(value, str) and SURROGATE.search(value):
+                raise AnalysisError(
+                    f"Chat {chat_id!a}, message index {index}: {field} contains an "
+                    "unpaired Unicode surrogate."
+                )
+        messages.append(message)
     messages.sort(key=lambda m: (m["time"], m["source_index"]))
     return messages
 
@@ -341,12 +342,28 @@ def read_cached_batch(path, number, start, end, msgs, sender):
     except (OSError, UnicodeError, ValueError):
         valid = False
     if not valid:
-        raise ValueError(f"Invalid cached batch {path}; remove it and rerun to retry that batch.")
+        raise AnalysisError(f"Invalid cached batch {path}; remove it and rerun to retry that batch.")
     return record
+
+
+def read_run_config(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AnalysisError(f"Invalid run configuration {path}.") from exc
 
 
 class BatchFormatError(ValueError):
     """Response was incomplete, empty, or not valid structured JSON."""
+
+
+def batch_error_summary(exc):
+    """Keep useful diagnostics without logging arbitrary client exception text."""
+    if isinstance(exc, BatchFormatError):
+        return f"BatchFormatError: {exc}"
+    status = getattr(exc, "status_code", None)
+    suffix = f" (HTTP {status})" if type(status) is int and 100 <= status <= 599 else ""
+    return type(exc).__name__ + suffix
 
 
 def has_target(msgs, sender, start, end):
@@ -396,7 +413,10 @@ def request_batch(client, args, msgs, batch):
                 status = getattr(response, "status", "completed")
                 details = getattr(response, "incomplete_details", None)
                 if status != "completed":
-                    raise BatchFormatError(f"Response status={status}; incomplete_details={details}")
+                    safe_status = status if status in ("incomplete", "failed", "cancelled", "queued", "in_progress") else "unknown"
+                    reason = getattr(details, "reason", None)
+                    safe_reason = reason if reason in ("max_output_tokens", "content_filter") else "unknown"
+                    raise BatchFormatError(f"Response status={safe_status}; incomplete reason={safe_reason}")
                 if not response.output_text:
                     raise BatchFormatError("Empty model response")
                 try:
@@ -470,12 +490,19 @@ def open_client():
 
 def run_tasks(client, args, msgs, batches, tasks, cache):
     """Defer Ctrl+C while scheduling and saving active work on the main thread."""
-    state = {"interrupted": False}
+    state = {"interrupted": False, "announced": False}
     previous = None
     if threading.current_thread() is threading.main_thread():
         previous = signal.getsignal(signal.SIGINT)
         def on_interrupt(_signum, _frame):
             state["interrupted"] = True
+            if not state["announced"]:
+                try:
+                    print("Interrupted: finishing active requests and caching their results "
+                          "(no new batches will start).", file=sys.stderr, flush=True)
+                    state["announced"] = True
+                except (OSError, RuntimeError):
+                    pass
         signal.signal(signal.SIGINT, on_interrupt)
     try:
         return _run_tasks(client, args, msgs, batches, tasks, cache, state)
@@ -522,6 +549,10 @@ def _run_tasks(client, args, msgs, batches, tasks, cache, state):
                     flush=True,
                 )
                 continue
+            if state["interrupted"] and not state["announced"]:
+                print("Interrupted: finishing active requests and caching their results "
+                      "(no new batches will start).", file=sys.stderr, flush=True)
+                state["announced"] = True
             for future in ready:
                 item = active.pop(future)
                 number = item[0]
@@ -534,9 +565,9 @@ def _run_tasks(client, args, msgs, batches, tasks, cache, state):
                         flush=True,
                     )
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # API exception text can include request or response contents.
-                    failures.append((number, type(exc).__name__))
-                    print(f"ERROR batch {number}: {type(exc).__name__}", file=sys.stderr, flush=True)
+                    detail = batch_error_summary(exc)
+                    failures.append((number, detail))
+                    print(f"ERROR batch {number}: {detail}", file=sys.stderr, flush=True)
                 # Keep the number of active requests bounded; stop scheduling new work
                 # after the first terminal failure.
                 if not failures and not interrupted and not state["interrupted"]:
@@ -556,14 +587,14 @@ def analyze(args, msgs, client=None):
     expected = fingerprint(args)
     meta_path = root / "run_config.json"
     if meta_path.exists():
-        existing = json.loads(meta_path.read_text(encoding="utf-8"))
+        existing = read_run_config(meta_path)
         if existing != expected:
             sys.exit(
                 "Configuration/source changed. Choose a NEW --output directory to prevent mixing results."
             )
     else:
         if any(cache.glob("batch-*.json")):
-            raise ValueError("Cached batches exist without run_config.json; choose a new --output directory.")
+            raise AnalysisError("Cached batches exist without run_config.json; choose a new --output directory.")
         write_json(meta_path, expected)
 
     batches = plan_batches(msgs, args.batch_size, args.context)
@@ -967,14 +998,14 @@ def main(argv=None):
             print("\n".join(list_chats(data)))
             return
         chat = find_chat(data, args.chat)
-    except (OSError, ValueError) as exc:
+    except (OSError, AnalysisError) as exc:
         ap.error(str(exc))
     if chat.get("id") is None:
         ap.error("The chat has no id in the export")
     args.conversation_id = f"viber:{chat['id']}"
     try:
         msgs = build_messages(data, chat)
-    except ValueError as exc:
+    except AnalysisError as exc:
         ap.error(str(exc))
 
     if args.list_senders:
@@ -996,7 +1027,7 @@ def main(argv=None):
         meta_path = args.output / "run_config.json"
         if not meta_path.exists():
             ap.error("Output directory does not hold a previous analysis (run_config.json missing)")
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta = read_run_config(meta_path)
         if meta != fingerprint(args):
             ap.error("Run config/source differs from cached analysis")
         make_report(args, msgs, plan_batches(msgs, args.batch_size, args.context))
@@ -1007,5 +1038,5 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         main()
-    except ValueError as exc:
+    except AnalysisError as exc:
         sys.exit(str(exc))
