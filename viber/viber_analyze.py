@@ -13,9 +13,9 @@ messages (with sender names and times) in batches to the OpenAI API, exactly as
 skype_analyze.py does. --list-chats, --list-senders and --report-only never use the
 network. Use it only on conversations you are entitled to analyse.
 
-    python viber_analyze.py --input export/viber_export.json --list-chats
-    python viber_analyze.py --input export/viber_export.json --chat 10 --list-senders
-    python viber_analyze.py --input export/viber_export.json --chat 10 \\
+    python viber/viber_analyze.py --input export/viber_export.json --list-chats
+    python viber/viber_analyze.py --input export/viber_export.json --chat 10 --list-senders
+    python viber/viber_analyze.py --input export/viber_export.json --chat 10 \\
         --sender viber:2 --chatlens-url http://10.0.0.10:5173/
 
 Sender IDs are ChatLens' own: viber:self for you, viber:<ContactID> for everyone else.
@@ -38,7 +38,11 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 
-from chatlens_links import CHATLENS_WINDOW_NAME, build_chatlens_url
+# chatlens_links.py is shared with the Skype scripts, so it lives in the repository root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# pylint: disable-next=wrong-import-position
+from chatlens_links import CHATLENS_WINDOW_NAME, build_chatlens_url  # noqa: E402
 
 PROMPT_VERSION = "viber-2026-11-08-v1"
 EXPORT_FORMAT = "viberpc-export"

@@ -34,5 +34,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Tests
+      # Each folder is its own start directory, so its tests import its script by bare name.
+      # Add `python -m unittest discover -s skype -v` when skype/ has tests.
+      - name: Tests (shared link helper)
         run: python -m unittest discover -v
+
+      # Skipped until viber/ has a test_*.py: unittest exits with an error when it finds none.
+      - name: Tests (Viber)
+        if: ${{ hashFiles('viber/test_*.py') != '' }}
+        run: python -m unittest discover -s viber -v
