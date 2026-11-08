@@ -82,19 +82,19 @@ To reconstruct reports without calling the API again, supply the same options pl
 
 This edition additionally creates `history.html`, containing all messages in the extracted conversation, with stable fragment anchors such as `#m0000123`. Every verified finding links to its corresponding full-history message from `report.html`, `report.md`, `findings.json` (`source_url`) and `findings.csv` (`source_url`). Place the generated files together in the same output directory; open `report.html` or `report.md` and follow its links to `history.html`. The selected message is highlighted. To generate this after a previous run without paying for API calls, use exactly the original input/sender/model/output arguments with `--report-only`.
 
-The identifiers `m0000123` are stable only for the same exported `conversation.json` in the same original message order. Do not regenerate the extraction with different ordering without regenerating the reports. HTML content is escaped and remains entirely local. The HTML does not embed or recreate original media files. This is not a modification of SkypeLens; integrating links with its virtual-scrolling UI requires a separate code change.
+The identifiers `m0000123` are stable only for the same exported `conversation.json` in the same original message order. Do not regenerate the extraction with different ordering without regenerating the reports. HTML content is escaped and remains entirely local. The HTML does not embed or recreate original media files.
 
-## SkypeLens deep links (the fork with message permalinks)
+## ChatLens links (`--chatlens-url`)
 
-This version can also add a second, optional hyperlink **to the exact original Skype message** in your patched SkypeLens, without removing the existing offline `history.html#...` link.
+This version can also add a second, optional hyperlink **to the exact original Skype message** in [ChatLens](https://github.com/sVathis/chatlens), without removing the offline `history.html#...` link. (This replaces the old `--skypelens-url` option and the `skypelens_url` field: SkypeLens became ChatLens.)
 
-Verified local SkypeLens base URL example: `http://10.0.0.10:5173/`. The link format is:
+ChatLens base URL example: `http://10.0.0.10:5173/`. Use exactly the address you open ChatLens at (same host, port, path and query). The link format is:
 
 ```
 http://10.0.0.10:5173/#conversationId=8%3Alive%3A.cid.0123456789abcdef&messageId=1700000000001
 ```
 
-Regenerate previously cached reports **without sending any content to the API** by running the original arguments with `--report-only` and adding the SkypeLens base URL:
+Regenerate previously cached reports **without sending any content to the API** by running the original arguments with `--report-only` and adding the ChatLens base URL:
 
 ```powershell
 python skype_analyze.py `
@@ -102,24 +102,24 @@ python skype_analyze.py `
   --sender "8:live:.cid.0123456789abcdef" `
   --model "gpt-5-mini" `
   --output ".\skype-analysis" `
-  --skypelens-url "http://10.0.0.10:5173/" `
+  --chatlens-url "http://10.0.0.10:5173/" `
   --report-only
 ```
 
-**Important:** Keep `--model`, `--batch-size`, `--context`, `--sender`, `--input` and `--output` identical to the original analysis run (if you used nondefault batch settings, supply them again). Changing only `--skypelens-url` does *not* alter the analysis fingerprint, so the cached results are reused.
+**Important:** Keep `--model`, `--batch-size`, `--context`, `--sender`, `--input` and `--output` identical to the original analysis run (if you used nondefault batch settings, supply them again). Changing only `--chatlens-url` does *not* alter the analysis fingerprint, so the cached results are reused.
 
 This creates:
 
-- `report.html`: **Προβολή στο SkypeLens** (named browser tab `skypelens`) and **Προβολή στο πλήρες ιστορικό** links for each finding.
+- `report.html`: **Προβολή στο ChatLens** (named browser tab `chatlens`) and **Προβολή στο πλήρες ιστορικό** links for each finding.
 - `report.md`: both links as regular Markdown links; suitable for Logseq.
-- `findings.json` and `findings.csv`: retains `source_url` pointing to `history.html`, and adds `skypelens_url` for the new link.
+- `findings.json` and `findings.csv`: retains `source_url` pointing to `history.html`, and adds `chatlens_url` for the new link (empty when `--chatlens-url` is omitted).
 - `history.html`: unchanged standalone locally searchable-through-browser transcript with fragment anchors.
 
-The SkypeLens URL is constructed from the **original `conversations[0].id`** and each original `MessageList[].id` in the source JSON; it does *not* use the selected `--sender` (even though this particular contact has an identical sender ID) or an internal `m0000123` key. If a message lacks an original Skype ID, it will have only the `history.html` link.
+The ChatLens URL is constructed from the **original `conversations[0].id`** and each original `MessageList[].id` in the source JSON; it does *not* use the selected `--sender` or an internal `m0000123` key. Only identifiers go into the URL, never message text. If a message lacks an original Skype ID, it will have only the `history.html` link. The link is built by the shared [`chatlens_links.py`](../chatlens_links.py) in the repository root, which pins the URL format together with ChatLens. The base URL can include a hosted application subpath, which is preserved. Only `http` and `https` URLs are accepted. Omit `--chatlens-url` to keep the offline-only reports.
 
-The SkypeLens base URL can include a hosted application subpath, and the generator preserves that path. Only `http` and `https` URLs are accepted. Omit `--skypelens-url` to keep the offline-only reports.
+Reports and findings made before the rename, with `skypelens_url` and `target="skypelens"`, still work: ChatLens treats the old tab name like `chatlens`. Run `--report-only` with `--chatlens-url` to regenerate them with the new names.
 
-**Availability and privacy:** Links using `10.0.0.10` resolve when your device can reach that LAN address (or over a suitable VPN); the pipeline does not publish SkypeLens or the conversations. Opening a deep link still requires the matching Skype export to be loaded in SkypeLens, as determined by your fork's persistence behavior. Do not publish the HTML/Markdown findings or links with private material without appropriate controls.
+**Availability and privacy:** Links using `10.0.0.10` resolve when your device can reach that LAN address (or over a suitable VPN); the pipeline does not publish ChatLens or the conversations. Opening a link still requires the matching Skype export to be loaded in ChatLens. Do not publish the HTML/Markdown findings or links with private material without appropriate controls.
 
 Run the included no-network tests with:
 
@@ -127,33 +127,15 @@ Run the included no-network tests with:
 python -m unittest discover -s tests -v
 ```
 
+### Same-tab navigation for findings
 
-### SkypeLens PR #2: same-tab navigation for findings
+`report.html` uses `target="chatlens"` on every ChatLens link. A ChatLens tab opened by the report is reused for subsequent clicks; because only the fragment changes, the in-memory Skype export stays loaded. The first click may require loading the matching export. Do **not** open ChatLens manually in a separate tab and expect `target="chatlens"` to target that tab; the report should open it.
 
-The canonical URL format is now **hash-based**, e.g.
+`report.md` contains the same URLs but Markdown has no portable way to specify a named browser tab. Whether a Markdown viewer opens a new tab depends on that viewer's behavior; ChatLens's cross-tab handoff may mitigate this.
 
-```text
-http://10.0.0.10:5173/#conversationId=8%3Alive%3A.cid.0123456789abcdef&messageId=1700000000001
-```
-
-`report.html` uses `target="skypelens"` on every SkypeLens link. A SkypeLens tab opened
-by the report is reused for subsequent clicks; because only the fragment changes,
-the in-memory Skype export stays loaded. The first click may require loading
-the matching export. Do **not** open SkypeLens manually in a separate tab and
-expect `target="skypelens"` to target that tab; the report should open it.
-
-`report.md` contains the same URLs but Markdown has no portable way to specify
-a named browser tab. Whether a Markdown viewer opens a new tab depends on that
-viewer's behavior; SkypeLens's cross-tab handoff may mitigate this.
-
-The named-tab links intentionally do **not** use `rel="noopener"`/`noreferrer`
-(they prevent named-tab reuse in browsers). Open the generated HTML locally
-from a trusted location; it may contain sensitive conversation excerpts.
+The named-tab links intentionally do **not** use `rel="noopener"`/`noreferrer` (they prevent named-tab reuse in browsers). Open the generated HTML locally from a trusted location, and only point `--chatlens-url` at a ChatLens you trust; the reports may contain sensitive conversation excerpts.
 
 Existing `history.html#...` backlinks are kept as a standalone fallback.
-
-Run `--report-only` with the same analysis arguments and `--skypelens-url` to
-regenerate reports and links **without OpenAI API calls**.
 
 ## Parallel API execution (new)
 
@@ -173,7 +155,7 @@ python skype_analyze.py `
   --sender '8:live:.cid.0123456789abcdef' `
   --model 'gpt-5-mini' `
   --output '.\skype-analysis' `
-  --skypelens-url 'http://10.0.0.10:5173/' `
+  --chatlens-url 'http://10.0.0.10:5173/' `
   --workers 4
 ```
 

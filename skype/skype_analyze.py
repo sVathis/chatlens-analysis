@@ -16,7 +16,12 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
+# chatlens_links.py is shared with the Viber analysis, so it lives in the repository root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# pylint: disable-next=wrong-import-position
+from chatlens_links import CHATLENS_WINDOW_NAME, build_chatlens_url  # noqa: E402
 
 PROMPT_VERSION = '2026-10-31-v1'
 INSTRUCTIONS = '''Είσαι προσεκτικός αναλυτής επικοινωνίας. Ελέγχεις μηνύματα γραμμένα στα ελληνικά.
@@ -102,34 +107,24 @@ def get_conversation_id(path):
     return str(conversations[0].get('id') or '')
 
 
-def skypelens_permalink(base_url, conversation_id, message_id):
-    """Build a hash-based SkypeLens permalink using original Skype IDs.
+def chatlens_permalink(base_url, conversation_id, message_id):
+    """Build a hash-based ChatLens permalink using original Skype IDs.
 
-    Match the canonical URL contract in sVathis/skypelens PR #2:
-    <base>#conversationId=<id>&messageId=<id>
+    <base>#conversationId=<id>&messageId=<id>, built by chatlens_links.build_chatlens_url,
+    which pins the format (tools contract: deep_link_contract.json).
 
-    Changing only the fragment keeps an already loaded SkypeLens tab in the
+    Changing only the fragment keeps an already loaded ChatLens tab in the
     same document (and preserves its in-memory export). The base URL before
-    the fragment must match the address actually used to open SkypeLens.
+    the fragment must match the address actually used to open ChatLens.
     Hosted subpaths and unrelated query parameters are preserved; older
     query-style conversationId/messageId parameters are removed.
     If identifiers are missing, return an empty string so the independent
-    history.html anchor can still be used.
+    history.html anchor can still be used. Raises ValueError for a base URL
+    that is not an absolute http(s) URL.
     """
     if not base_url or not conversation_id or message_id is None or str(message_id) == '':
         return ''
-    url = urlsplit(base_url)
-    if url.scheme not in ('http', 'https') or not url.netloc:
-        raise ValueError('--skypelens-url must be a full http(s) URL')
-    kept = [(key, value) for key, value in
-            parse_qsl(url.query, keep_blank_values=True)
-            if key not in ('conversationId', 'messageId')]
-    fragment = urlencode([
-        ('conversationId', str(conversation_id)),
-        ('messageId', str(message_id)),
-    ], quote_via=quote, safe='')
-    query = urlencode(kept, quote_via=quote, safe='')
-    return urlunsplit((url.scheme, url.netloc, url.path or '/', query, fragment))
+    return build_chatlens_url(str(conversation_id), str(message_id), base_url)
 
 
 def fingerprint(path, sender, model, batch_size, context):
@@ -405,8 +400,8 @@ def create_history(root, msgs, flagged):
 def make_report(args,msgs,batches):
     root = args.output
     conversation_id = get_conversation_id(args.input)
-    if args.skypelens_url and not conversation_id:
-        raise ValueError('No original conversation ID found in input JSON; cannot build SkypeLens links')
+    if args.chatlens_url and not conversation_id:
+        raise ValueError('No original conversation ID found in input JSON; cannot build ChatLens links')
     by_key = {m['key']:(i,m) for i,m in enumerate(msgs)}
     issues, findings, covered, usage = [], [], set(), Counter()
     for number,(start,left,right,end) in enumerate(batches,1):
@@ -436,12 +431,12 @@ def make_report(args,msgs,batches):
     for f in findings:
         # Keep the existing offline archive link for independent verification.
         f['source_url'] = 'history.html#' + f['message_key']
-        # SkypeLens uses the actual conversation.id and original message.id.
-        f['skypelens_url'] = skypelens_permalink(
-            args.skypelens_url, conversation_id, f['skype_id'])
+        # ChatLens uses the actual conversation.id and original message.id.
+        f['chatlens_url'] = chatlens_permalink(
+            args.chatlens_url, conversation_id, f['skype_id'])
     write_json(root/'findings.json',findings)
     write_json(root/'rejected_findings.json',issues)
-    cols = ['time','message_key','skype_id','sender_name','quote','category','severity','confidence','reason','caveat','source_url','skypelens_url']
+    cols = ['time','message_key','skype_id','sender_name','quote','category','severity','confidence','reason','caveat','source_url','chatlens_url']
     with (root/'findings.csv').open('w',encoding='utf-8-sig',newline='') as out:
         writer=csv.DictWriter(out,fieldnames=cols,extrasaction='ignore');writer.writeheader();writer.writerows(findings)
     count = len(covered)
@@ -456,14 +451,14 @@ def make_report(args,msgs,batches):
     rows=[]
     for f in findings:
         c=''.join('<div class="msg"><b>'+html.escape(q['time']+' '+q['sender'])+'</b><p>'+html.escape(q['text'])+'</p></div>' for q in f['context'])
-        skypelens_html = (
-            f'<a class="skypelens-link" href="{html.escape(f["skypelens_url"], quote=True)}" '
-            f'target="skypelens">↗ Προβολή στο SkypeLens</a> · '
-            if f['skypelens_url'] else '')
+        chatlens_html = (
+            f'<a class="chatlens-link" href="{html.escape(f["chatlens_url"], quote=True)}" '
+            f'target="{CHATLENS_WINDOW_NAME}">↗ Προβολή στο ChatLens</a> · '
+            if f['chatlens_url'] else '')
         rows.append(f'<article><h3>{html.escape(f["time"])} · {html.escape(f["category"])}</h3>'
           f'<p><b>Message ID:</b> {html.escape(f["skype_id"] or f["message_key"])} · '
           f'<b>Severity:</b> {html.escape(f["severity"])} · <b>Confidence:</b> {html.escape(f["confidence"])}</p>'
-          f'<p>{skypelens_html}<a href="{html.escape(f["source_url"], quote=True)}">↗ Προβολή στο πλήρες ιστορικό</a></p>'
+          f'<p>{chatlens_html}<a href="{html.escape(f["source_url"], quote=True)}">↗ Προβολή στο πλήρες ιστορικό</a></p>'
           f'<blockquote>{html.escape(f["quote"])}</blockquote><p>{html.escape(f["reason"])}</p>'
           f'<p><i>{html.escape(f["caveat"])}</i></p><details><summary>Δείτε συμφραζόμενα</summary>{c}</details></article>')
     page='''<!doctype html><html lang="el"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Skype evidence review</title><style>body{font:16px system-ui,sans-serif;max-width:1000px;margin:35px auto;padding:0 16px;background:#f6f7fa;color:#202632}article{background:white;padding:20px;border:1px solid #dfe2e8;border-radius:10px;margin:16px 0}blockquote{border-left:4px solid #4969aa;margin:14px 0;padding:10px 16px;background:#f1f4f8;white-space:pre-wrap}p{white-space:pre-wrap}.msg{padding:10px;border-bottom:1px solid #eee}summary{cursor:pointer}small{color:#555}</style><h1>Ανασκόπηση συνομιλίας Skype</h1>'''
@@ -491,7 +486,7 @@ def make_report(args,msgs,batches):
             f'**Αποστολέας:** {f["sender_name"]}  ',
             f'**Skype message ID:** `{f["skype_id"] or "(μη διαθέσιμο)"}`  ',
             f'**Internal message key:** `{f["message_key"]}`  ',
-            *([f'**SkypeLens:** [Άνοιγμα αρχικού μηνύματος]({f["skypelens_url"]})  '] if f['skypelens_url'] else []),
+            *([f'**ChatLens:** [Άνοιγμα αρχικού μηνύματος]({f["chatlens_url"]})  '] if f['chatlens_url'] else []),
             f'**Πρωτογενές μήνυμα:** [Άνοιγμα στο πλήρες ιστορικό]({f["source_url"]})  ',
             f'**Σοβαρότητα:** {f["severity"]}  ',
             f'**Βεβαιότητα μοντέλου:** {f["confidence"]}', '',
@@ -524,7 +519,7 @@ def main():
     ap.add_argument('--workers',type=int,default=1,help='Parallel API calls (1..16); start with 3 or 4. Does not invalidate saved batches')
     ap.add_argument('--max-batches',type=int,default=0,help='Process only this many new batches in this run')
     ap.add_argument('--report-only',action='store_true',help='Regenerate reports without API calls')
-    ap.add_argument('--skypelens-url',default=None,metavar='URL',help='Base URL of SkypeLens, e.g. http://10.0.0.10:5173/ (creates hash links; report generation only)')
+    ap.add_argument('--chatlens-url',default=None,metavar='URL',help='Base URL of ChatLens, e.g. http://10.0.0.10:5173/ (creates hash links; report generation only)')
     args=ap.parse_args()
     if args.workers < 1 or args.workers > 16:
         ap.error('--workers must be 1..16')
@@ -532,9 +527,9 @@ def main():
         ap.error('--max-batches must be >= 0')
     if args.batch_size < 1 or args.batch_size>200 or args.context<0 or args.context>30:
         ap.error('--batch-size must be 1..200 and --context 0..30')
-    if args.skypelens_url:
-        try: skypelens_permalink(args.skypelens_url, 'test-conversation', 'test-message')
-        except ValueError as e: ap.error(str(e))
+    if args.chatlens_url:
+        try: chatlens_permalink(args.chatlens_url, 'test-conversation', 'test-message')
+        except ValueError as e: ap.error(f'--chatlens-url: {e}')
     msgs=load(args.input)
     if args.list_senders:
         counts=Counter((m['sender'],m['name']) for m in msgs)

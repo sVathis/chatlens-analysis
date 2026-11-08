@@ -69,7 +69,7 @@ class ParallelTests(unittest.TestCase):
     def args(self, path, output, workers=4, max_batches=0):
         return types.SimpleNamespace(input=path,output=output,sender='8:live:contact',
             model='gpt-5-mini',batch_size=10,context=2,workers=workers,
-            max_batches=max_batches,skypelens_url='http://10.0.0.10:5173/')
+            max_batches=max_batches,chatlens_url='http://10.0.0.10:5173/')
     def run_fake(self, args, msgs):
         with patch.dict(sys.modules, {'openai': types.SimpleNamespace(OpenAI=FakeClient)}), \
              patch.dict(os.environ, {'OPENAI_API_KEY':'dummy'}):
