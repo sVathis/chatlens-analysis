@@ -34,10 +34,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      # Each folder is its own start directory, so its tests import its script by bare name.
-      # Add `python -m unittest discover -s skype -v` when skype/ has tests.
+      # Each folder is its own start directory. The Skype tests load skype_analyze.py by path
+      # and fake the OpenAI package, so they need no network and no pip install either.
       - name: Tests (shared link helper)
         run: python -m unittest discover -v
+
+      - name: Tests (Skype)
+        run: python -m unittest discover -s skype/tests -v
 
       # Skipped until viber/ has a test_*.py: unittest exits with an error when it finds none.
       - name: Tests (Viber)
