@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest version the scripts claim to support, and a current one
+        python: ["3.10", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The scripts and their tests use only the standard library (the OpenAI package is
+      # imported only when a real analysis runs), so there is nothing to pip install.
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Tests
+        run: python -m unittest discover -v

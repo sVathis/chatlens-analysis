@@ -1,0 +1,28 @@
+# --- Private data: NEVER on GitHub ---
+# Analysis output folders (default names, and any other "<name>-analysis" folder)
+*-analysis/
+# ... and the files an analysis writes, if the output folder is somewhere else
+batches/
+run_config.json
+findings.json
+findings.csv
+rejected_findings.json
+summary.json
+report.html
+report.md
+history.html
+# The exports the scripts read
+viber_export.json
+conversation.json
+export/
+media/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local tooling
+.claude/
+.mcp.json
