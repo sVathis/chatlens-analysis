@@ -42,7 +42,7 @@ jobs:
       - name: Tests (Skype)
         run: python -m unittest discover -s skype/tests -v
 
-      # Skipped until viber/ has a test_*.py: unittest exits with an error when it finds none.
+      # Skipped until viber/tests has a test_*.py: unittest exits with an error when it finds none.
       - name: Tests (Viber)
-        if: ${{ hashFiles('viber/test_*.py') != '' }}
-        run: python -m unittest discover -s viber -v
+        if: ${{ hashFiles('viber/tests/test_*.py') != '' }}
+        run: python -m unittest discover -s viber/tests -v

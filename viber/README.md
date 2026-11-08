@@ -94,7 +94,7 @@ the analysis.
 ## Tests
 
 ```bash
-python -m unittest discover -s viber -v
+python -m unittest discover -s viber/tests -v
 ```
 
 Tests use synthetic data and a fake API client; they need no network and no key.

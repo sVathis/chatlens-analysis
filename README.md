@@ -32,17 +32,18 @@ viber/                     the Viber analysis (its own README)
 skype/                     the Skype analysis (its own README, tests and requirements)
 ```
 
-`viber/viber_analyze.py` imports `chatlens_links.py` from the repository root, so run it from
-the root (`python viber/viber_analyze.py ...`). `skype/skype_analyze.py` builds its SkypeLens
-links itself (`--skypelens-url`, report links in a tab named `skypelens`, which ChatLens treats
-like `chatlens`) and does not import the shared helper; run it as its README describes.
+Both scripts import `chatlens_links.py` from the repository root and take the same option,
+`--chatlens-url`: the address you open ChatLens at, used for the "View in ChatLens" link of
+each finding (report links open in a tab named `chatlens`). Run the Viber script from the
+root (`python viber/viber_analyze.py ...`); the Skype script as its README describes.
+`--skypelens-url` and the `skypelens_url` field no longer exist.
 
 ## Tests
 
 ```bash
 python -m unittest discover -v              # the shared link helper
 python -m unittest discover -s skype/tests -v   # the Skype analysis
-python -m unittest discover -s viber -v     # the Viber analysis (once it has tests)
+python -m unittest discover -s viber/tests -v  # the Viber analysis
 ```
 
 CI runs both on Python 3.10 and 3.13. `deep_link_contract.json` is copied from ChatLens,
