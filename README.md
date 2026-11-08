@@ -9,7 +9,7 @@ to the exact message in ChatLens.
 | Folder | Reads | Status |
 |---|---|---|
 | [`viber/`](viber/README.md) | `viber_export.json` from [ViberPC-Export](https://github.com/sVathis/ViberPC-Export) | **not yet run on real data** |
-| `skype/` | a single extracted Skype conversation (`skype_extract.py` output) | to be added |
+| [`skype/`](skype/README.md) | a single extracted Skype conversation (`skype_extract.py` output) | in use; has its own tests |
 
 > [!WARNING]
 > **Privacy.** Unlike ChatLens (which runs entirely in your browser), these scripts send data
@@ -29,17 +29,20 @@ chatlens_links.py          shared: builds the ChatLens links used in the reports
 deep_link_contract.json    shared: the URL format, copied from ChatLens
 test_chatlens_links.py     tests for the shared helper
 viber/                     the Viber analysis (its own README)
-skype/                     the Skype analysis (to be added)
+skype/                     the Skype analysis (its own README, tests and requirements)
 ```
 
-The scripts in `viber/` and `skype/` import `chatlens_links.py` from the repository root, so
-run them from the root (for example `python viber/viber_analyze.py ...`).
+`viber/viber_analyze.py` imports `chatlens_links.py` from the repository root, so run it from
+the root (`python viber/viber_analyze.py ...`). `skype/skype_analyze.py` builds its SkypeLens
+links itself (`--skypelens-url`, report links in a tab named `skypelens`, which ChatLens treats
+like `chatlens`) and does not import the shared helper; run it as its README describes.
 
 ## Tests
 
 ```bash
 python -m unittest discover -v              # the shared link helper
-python -m unittest discover -s viber -v     # the Viber analysis
+python -m unittest discover -s skype/tests -v   # the Skype analysis
+python -m unittest discover -s viber -v     # the Viber analysis (once it has tests)
 ```
 
 CI runs both on Python 3.10 and 3.13. `deep_link_contract.json` is copied from ChatLens,

@@ -565,7 +565,10 @@ def analyze(args, msgs, client=None):
 
 def shown_text(message):
     """A message's text, or a marker with its kind when it has none (a photo, a call, ...)."""
-    return message["text"] or f"[{message['kind'] or '—'}]"
+    if message["text"]:
+        return message["text"]
+    # The same marker as history.html and the Skype reports, plus what kind of message it was
+    return f"[Κενό κείμενο / {message['kind']}]" if message["kind"] else "[Κενό κείμενο]"
 
 
 def create_history(root, msgs, flagged):

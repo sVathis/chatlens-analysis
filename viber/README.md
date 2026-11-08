@@ -14,7 +14,7 @@
 Python 3.10+. Nothing to install for listing, tests or `--report-only`; for a real analysis:
 
 ```bash
-python -m pip install openai
+python -m pip install -r viber/requirements.txt
 export OPENAI_API_KEY=...        # in your shell, never in a file
 ```
 
@@ -60,6 +60,36 @@ any API call.
 **Checks.** A finding is kept only if its message is in the batch's scored (TARGET) window,
 was written by the selected sender, and its quote appears word for word in that message.
 Messages without text (photos, stickers, calls, locations, system notices) are context only.
+
+## Differences from the Skype analysis
+
+The pipeline, the prompt (plus two sentences about `kind` and `reply_to`), the batching, the
+retries and splitting, the verification and the report layout are the same as in
+[`skype/`](../skype/README.md), so the outputs have the same files and the same `findings.csv` and `summary.json` fields,
+apart from the ID and link ones below. What differs, on purpose:
+
+- **Input.** The whole `viber_export.json`, with `--chat` to pick the conversation (Skype
+  needs a separately extracted `conversation.json`). `run_config.json` and `summary.json` also
+  record the `conversation_id`.
+- **IDs and links.** Findings carry `viber_id` and `chatlens_url` (`--chatlens-url`), where
+  Skype has `skype_id` and `skypelens_url` (`--skypelens-url`). Report links open the tab named
+  `chatlens`.
+- **Messages without text** (photos, stickers, calls, locations) stay in the context and show
+  as `[Κενό κείμενο / <kind>]`. A caption on a photo or video is analysed like text.
+- **Replies.** The quoted message goes to the model as `reply_to`, for context only, and
+  `history.html` shows it above the reply.
+- **Times** are UTC (ISO 8601, ending in `Z`), made from Viber's epoch milliseconds.
+
+## Limitations and safeguards
+
+The limits listed for the [Skype analysis](../skype/README.md#limitations-and-safeguards) apply
+here too: the model can overlook relevant language, findings are candidates for human review and
+not a legal assessment, photos, voice messages and files are not analysed, a message is cut at
+30,000 characters, only 5 neighbouring messages are context, every uncached batch costs API
+tokens (and failed attempts are billed but missing from `summary.json`), and the verbatim-quote
+check rejects altered quotes. The export and the output folders contain personal information:
+do not publish them. Also specific to Viber: Viber reactions and edit history are not part of
+the analysis.
 
 ## Tests
 
