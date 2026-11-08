@@ -31,7 +31,9 @@ import html
 import json
 import os
 import random
+import signal
 import sys
+import threading
 import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -144,7 +146,26 @@ def read_export(path):
             f"Unsupported Viber export version {version!r}: this script reads version "
             f"{SUPPORTED_VERSION}. Update ChatLens, or export again with a matching ViberPC-Export."
         )
+    validate_export_strings(data)
+    for chat in data["chats"]:
+        if isinstance(chat, dict) and chat.get("messages") is not None and not isinstance(chat["messages"], list):
+            raise ValueError("Export chat.messages must be a list.")
     return data, hashlib.sha256(raw).hexdigest()
+
+
+def validate_export_strings(value):
+    """Reject strings that cannot be safely written as UTF-8 HTML or JSON."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if "\x00" in item or any(0xD800 <= ord(ch) <= 0xDFFF for ch in item):
+                raise ValueError("Export contains NUL or an unpaired Unicode surrogate.")
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
 
 
 def list_chats(data):
@@ -200,6 +221,11 @@ def build_messages(data, chat):
     """
     contacts = data.get("contacts") if isinstance(data.get("contacts"), dict) else {}
     self_info = data.get("self") if isinstance(data.get("self"), dict) else {}
+    validate_export_strings([contacts, self_info, chat])
+    if not isinstance(self_info.get("contactIds") or [], list):
+        raise ValueError("Export self.contactIds must be a list.")
+    if not isinstance(chat.get("messages") or [], list):
+        raise ValueError("Export chat.messages must be a list.")
     self_ids = {str(contact_id) for contact_id in self_info.get("contactIds") or []}
     self_name = str(self_info.get("name") or self_info.get("number") or SELF_ID)
 
@@ -294,6 +320,29 @@ def write_json(path, obj):
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
+
+
+def read_cached_batch(path, number, start, end, msgs, sender):
+    """Reject corrupt or mismatched cache records before counting their coverage."""
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        valid = (
+            isinstance(record, dict)
+            and type(record.get("batch")) is int and record["batch"] == number
+            and type(record.get("start")) is int and record["start"] == start
+            and type(record.get("end")) is int and record["end"] == end
+            and isinstance(record.get("findings"), list)
+            and all(isinstance(item, dict) and all(isinstance(item.get(field), str) for field in
+                    ("message_key", "quote", "category", "severity", "confidence", "reason", "caveat"))
+                    for item in record["findings"])
+            and isinstance(record.get("usage", {}), dict)
+            and not (record.get("skipped_no_target") and has_target(msgs, sender, start, end))
+        )
+    except (OSError, UnicodeError, ValueError):
+        valid = False
+    if not valid:
+        raise ValueError(f"Invalid cached batch {path}; remove it and rerun to retry that batch.")
+    return record
 
 
 class BatchFormatError(ValueError):
@@ -420,6 +469,22 @@ def open_client():
 
 
 def run_tasks(client, args, msgs, batches, tasks, cache):
+    """Defer Ctrl+C while scheduling and saving active work on the main thread."""
+    state = {"interrupted": False}
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.getsignal(signal.SIGINT)
+        def on_interrupt(_signum, _frame):
+            state["interrupted"] = True
+        signal.signal(signal.SIGINT, on_interrupt)
+    try:
+        return _run_tasks(client, args, msgs, batches, tasks, cache, state)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
+
+
+def _run_tasks(client, args, msgs, batches, tasks, cache, state):
     """Send the missing batches. Returns (batches completed, failures, interrupted)."""
     failures, completed, interrupted = [], 0, False
     # Workers perform API calls only; cache writes take place on the main thread atomically.
@@ -428,6 +493,8 @@ def run_tasks(client, args, msgs, batches, tasks, cache):
         active = {}
 
         def submit_next():
+            if state["interrupted"]:
+                return
             try:
                 item = next(remaining)
             except StopIteration:
@@ -467,13 +534,14 @@ def run_tasks(client, args, msgs, batches, tasks, cache):
                         flush=True,
                     )
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    failures.append((number, str(exc)))
-                    print(f"ERROR batch {number}: {exc}", file=sys.stderr, flush=True)
+                    # API exception text can include request or response contents.
+                    failures.append((number, type(exc).__name__))
+                    print(f"ERROR batch {number}: {type(exc).__name__}", file=sys.stderr, flush=True)
                 # Keep the number of active requests bounded; stop scheduling new work
                 # after the first terminal failure.
-                if not failures and not interrupted:
+                if not failures and not interrupted and not state["interrupted"]:
                     submit_next()
-    return completed, failures, interrupted
+    return completed, failures, interrupted or state["interrupted"]
 
 
 def analyze(args, msgs, client=None):
@@ -494,6 +562,8 @@ def analyze(args, msgs, client=None):
                 "Configuration/source changed. Choose a NEW --output directory to prevent mixing results."
             )
     else:
+        if any(cache.glob("batch-*.json")):
+            raise ValueError("Cached batches exist without run_config.json; choose a new --output directory.")
         write_json(meta_path, expected)
 
     batches = plan_batches(msgs, args.batch_size, args.context)
@@ -511,6 +581,7 @@ def analyze(args, msgs, client=None):
     for number, (start, left, right, end) in enumerate(batches, 1):
         outfile = cache / f"batch-{number:05d}.json"
         if outfile.exists():
+            read_cached_batch(outfile, number, start, end, msgs, args.sender)
             cached += 1
             continue
         if not has_target(msgs, args.sender, start, end):
@@ -636,7 +707,7 @@ def collect_findings(args, msgs, batches):
         path = args.output / "batches" / f"batch-{number:05d}.json"
         if not path.exists():
             continue
-        record = json.loads(path.read_text(encoding="utf-8"))
+        record = read_cached_batch(path, number, start, end, msgs, args.sender)
         for k, v in record.get("usage", {}).items():
             if isinstance(v, (int, float)):
                 usage[k] += v
@@ -901,15 +972,20 @@ def main(argv=None):
     if chat.get("id") is None:
         ap.error("The chat has no id in the export")
     args.conversation_id = f"viber:{chat['id']}"
-    msgs = build_messages(data, chat)
+    try:
+        msgs = build_messages(data, chat)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     if args.list_senders:
         counts = Counter((m["sender"], m["name"]) for m in msgs)
         by_id = Counter()
-        for (sid, _name), n in counts.items():
+        names_by_id = {}
+        for (sid, name), n in counts.items():
             by_id[sid] += n
+            names_by_id.setdefault(sid, []).append(name)
         for sid, n in by_id.most_common():
-            names = [name for (s, name) in counts if s == sid]
+            names = names_by_id[sid]
             print(f"{n:>6}  {sid!r}   display names: {', '.join(names[:5])}")
         return
     if not args.sender:
@@ -929,4 +1005,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ValueError as exc:
+        sys.exit(str(exc))

@@ -72,7 +72,7 @@ apart from the ID and link ones below. What differs, on purpose:
   needs a separately extracted `conversation.json`). `run_config.json` and `summary.json` also
   record the `conversation_id`.
 - **IDs and links.** Findings carry `viber_id` and `chatlens_url` (`--chatlens-url`), where
-  Skype has `skype_id` and `skypelens_url` (`--skypelens-url`). Report links open the tab named
+  Skype has `skype_id` and the same `chatlens_url` (`--chatlens-url`). Report links open the tab named
   `chatlens`.
 - **Messages without text** (photos, stickers, calls, locations) stay in the context and show
   as `[Κενό κείμενο / <kind>]`. A caption on a photo or video is analysed like text.

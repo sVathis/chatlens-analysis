@@ -151,6 +151,27 @@ def write_json(path, obj):
     temp.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding='utf-8')
     temp.replace(path)
 
+def read_cached_batch(path, number, start, end, msgs, sender):
+    """Reject corrupt or mismatched cache records before counting coverage."""
+    try:
+        record = json.loads(path.read_text(encoding='utf-8'))
+        valid = (isinstance(record, dict)
+            and type(record.get('batch')) is int and record['batch'] == number
+            and type(record.get('start')) is int and record['start'] == start
+            and type(record.get('end')) is int and record['end'] == end
+            and isinstance(record.get('findings'), list)
+            and all(isinstance(item, dict) and all(isinstance(item.get(field), str) for field in
+                ('message_key', 'quote', 'category', 'severity', 'confidence', 'reason', 'caveat'))
+                for item in record['findings'])
+            and isinstance(record.get('usage', {}), dict)
+            and not (record.get('skipped_no_target') and
+                     any(m['sender'] == sender and m['text'] for m in msgs[start:end])))
+    except (OSError, UnicodeError, ValueError):
+        valid = False
+    if not valid:
+        raise ValueError(f'Invalid cached batch {path}; remove it and rerun to retry that batch.')
+    return record
+
 class BatchFormatError(ValueError):
     """Response was incomplete, empty, or not valid structured JSON."""
 
@@ -262,6 +283,8 @@ def analyze(args, msgs):
         if existing != expected:
             sys.exit('Configuration/source changed. Choose a NEW --output directory to prevent mixing results.')
     else:
+        if any(cache.glob('batch-*.json')):
+            raise ValueError('Cached batches exist without run_config.json; choose a new --output directory.')
         write_json(meta_path, expected)
 
     batches = plan_batches(msgs, args.batch_size, args.context)
@@ -276,6 +299,7 @@ def analyze(args, msgs):
     for number, (start, left, right, end) in enumerate(batches, 1):
         outfile = cache / f'batch-{number:05d}.json'
         if outfile.exists():
+            read_cached_batch(outfile, number, start, end, msgs, args.sender)
             cached += 1
             continue
         target = any(m['sender'] == args.sender and m['text'] for m in msgs[start:end])
@@ -335,8 +359,9 @@ def analyze(args, msgs):
                             print(f'Completed batch {number}/{len(batches)} '
                                   f'({completed}/{len(tasks)} new)', flush=True)
                         except Exception as exc:
-                            failures.append((number, str(exc)))
-                            print(f'ERROR batch {number}: {exc}', file=sys.stderr,
+                            # Exception messages can contain request or response text.
+                            failures.append((number, type(exc).__name__))
+                            print(f'ERROR batch {number}: {type(exc).__name__}', file=sys.stderr,
                                   flush=True)
                         # Keep the number of active requests bounded; stop
                         # scheduling new work after the first terminal failure.
@@ -407,7 +432,7 @@ def make_report(args,msgs,batches):
     for number,(start,left,right,end) in enumerate(batches,1):
         path = root/'batches'/f'batch-{number:05d}.json'
         if not path.exists(): continue
-        record = json.loads(path.read_text(encoding='utf-8'))
+        record = read_cached_batch(path, number, start, end, msgs, args.sender)
         for k,v in record.get('usage',{}).items():
             if isinstance(v,(int,float)): usage[k] += v
         for m in msgs[start:end]: covered.add(m['key'])
@@ -549,4 +574,8 @@ def main():
         make_report(args,msgs,plan_batches(msgs,args.batch_size,args.context))
     else: analyze(args,msgs)
 
-if __name__=='__main__': main()
+if __name__=='__main__':
+    try:
+        main()
+    except ValueError as exc:
+        sys.exit(str(exc))
