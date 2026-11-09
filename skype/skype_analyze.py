@@ -88,7 +88,7 @@ def load(path):
     if not isinstance(convs, list): raise AnalysisError('Expected top-level conversations list')
     if len(convs) != 1:
         raise AnalysisError(f'Expected one extracted conversation, found {len(convs)}. Use skype_extract.py first.')
-    raw = convs[0].get('MessageList') or []
+    raw = convs[0].get('MessageList') or convs[0].get('messages') or []
     messages = []
     # Stable keys even for messages without IDs, computed using original order.
     for index, msg in enumerate(raw):

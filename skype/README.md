@@ -6,11 +6,29 @@ A local, resumable Python command-line pipeline that analyzes **one extracted** 
 
 - Python 3.10 or newer
 - An OpenAI API key with billing enabled
-- `conversation.json` exported using `skype_extract.py` (one conversation, with a `conversations[0].MessageList` array)
+- `conversation.json` exported using `skype_extract.py` (one conversation, with a `conversations[0].MessageList` or `messages` array)
 
 ```powershell
 py -m pip install -r requirements.txt
 ```
+
+## Step 0: Extract one conversation
+
+From the `skype/` directory, list conversations and extract the one you want using its exact ID:
+
+```powershell
+python skype_extract.py ".\path\to\messages.json" --list
+python skype_extract.py ".\path\to\messages.json" --contact "EXACT_CONVERSATION_ID" --output-dir ".\exports"
+```
+
+The extractor writes `conversation.json` and a readable `conversation.md` in a folder named
+after the conversation. Use `--split year` or `--split month` to split only the Markdown.
+Extraction is local and needs no API key. The JSON preserves the original message order and
+metadata; Markdown is a lossy, chronological view. Existing output files are not overwritten:
+choose a different `--output-dir` to extract again. Keep any older extracted JSON used for an
+analysis unchanged when resuming, because re-extraction can change its fingerprint and keys.
+The extractor reads the entire export into memory. The export and both extracted files contain
+private data; keep them out of version control.
 
 ## Step 1: Identify the exact sender ID
 

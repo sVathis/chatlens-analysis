@@ -13,7 +13,11 @@ report.md
 history.html
 # The exports the scripts read
 viber_export.json
+messages.json
 conversation.json
+conversation.md
+conversation-*.md
+skype-extracted/
 export/
 media/
 
