@@ -22,12 +22,23 @@ to the exact message in ChatLens.
 The findings are indications for human review. They are not statements about intent or legal
 liability, and the reports say so.
 
+## Shared setup
+
+Create one virtual environment for both analyses and install their dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate             # Windows PowerShell: .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
 ## Layout
 
 ```
 chatlens_links.py          shared: builds the ChatLens links used in the reports
 deep_link_contract.json    shared: the URL format, copied from ChatLens
 test_chatlens_links.py     tests for the shared helper
+requirements.txt           dependencies for both analyses
 viber/                     the Viber analysis (its own README)
 skype/                     the Skype analysis (its own README, tests and requirements)
 ```
