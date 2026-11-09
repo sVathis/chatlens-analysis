@@ -22,18 +22,28 @@ python skype_extract.py ".\path\to\messages.json" --contact "EXACT_CONVERSATION_
 ```
 
 The extractor writes `conversation.json` and a readable `conversation.md` in a folder named
-after the conversation. Use `--split year` or `--split month` to split only the Markdown.
+after the conversation with an ID-derived suffix; use the path printed by the extractor in
+the following commands. For missing or duplicate IDs, `--list` shows a one-based `--index`
+that selects and distinguishes the conversation. Those suffixes depend on export order.
+Use `--split year` or `--split month` to split only the Markdown.
 Extraction is local and needs no API key. The JSON preserves the original message order and
 metadata; Markdown is a lossy, chronological view. Existing output files are not overwritten:
-choose a different `--output-dir` to extract again. Keep any older extracted JSON used for an
-analysis unchanged when resuming, because re-extraction can change its fingerprint and keys.
+choose a different `--output-dir` to extract again. On a failed write the extractor removes files
+it created in that attempt; after a forced termination, check for partial files before retrying.
+Keep the original `conversation.json` for any existing analysis: re-extraction can change its
+bytes and keys, causing the cached run's SHA-256 fingerprint check to reject it.
 The extractor reads the entire export into memory. The export and both extracted files contain
-private data; keep them out of version control.
+private data; keep them out of version control. On POSIX systems, extracted files are created
+with owner-only permissions; on Windows, access depends on the output folder's ACL.
+Raw message text in `conversation.md` can resemble message headings, so treat it as a reading
+copy and verify ambiguous boundaries against `conversation.json` before using it with an LLM.
+Markdown uses the analyzer's timestamp fields (`originalarrivaltime`, `composetime`, and
+`createdTime`); a message with only `composeTime` is undated in both views.
 
 ## Step 1: Identify the exact sender ID
 
 ```powershell
-python skype_analyze.py --input ".\exports\Example Contact\conversation.json" --list-senders
+python skype_analyze.py --input ".\exports\EXTRACTED_FOLDER\conversation.json" --list-senders
 ```
 
 Use the **`from` sender ID** displayed here, **not necessarily the conversation ID**. It is important not to mix the two.
@@ -49,7 +59,7 @@ For added security, avoid putting API keys in source code or committed files. Th
 ## Step 3: Start a small, paid API test
 
 ```powershell
-python skype_analyze.py --input ".\exports\Example Contact\conversation.json" `
+python skype_analyze.py --input ".\exports\EXTRACTED_FOLDER\conversation.json" `
   --sender "EXACT_SENDER_ID_FROM_STEP_1" `
   --output ".\skype-analysis" `
   --model gpt-6-luna `
@@ -63,7 +73,7 @@ The default batch contains 60 **target-position messages**, plus 5 messages of c
 Run the **same command without `--max-batches`**:
 
 ```powershell
-python skype_analyze.py --input ".\exports\Example Contact\conversation.json" `
+python skype_analyze.py --input ".\exports\EXTRACTED_FOLDER\conversation.json" `
   --sender "EXACT_SENDER_ID_FROM_STEP_1" `
   --output ".\skype-analysis" `
   --model gpt-6-luna
@@ -118,7 +128,7 @@ Regenerate previously cached reports **without sending any content to the API** 
 
 ```powershell
 python skype_analyze.py `
-  --input ".\exports\Example Contact\conversation.json" `
+  --input ".\exports\EXTRACTED_FOLDER\conversation.json" `
   --sender "8:live:.cid.0123456789abcdef" `
   --model "gpt-5-mini" `
   --output ".\skype-analysis" `
@@ -171,7 +181,7 @@ Run on PowerShell:
 
 ```powershell
 python skype_analyze.py `
-  --input '.\exports\Example Contact\conversation.json' `
+  --input '.\exports\EXTRACTED_FOLDER\conversation.json' `
   --sender '8:live:.cid.0123456789abcdef' `
   --model 'gpt-5-mini' `
   --output '.\skype-analysis' `
