@@ -40,7 +40,7 @@ deep_link_contract.json    shared: the URL format, copied from ChatLens
 test_chatlens_links.py     tests for the shared helper
 requirements.txt           dependencies for both analyses
 viber/                     the Viber analysis (its own README)
-skype/                     the Skype analysis (its own README, tests and requirements)
+skype/                     the Skype extractor and analysis (README, tests and requirements)
 ```
 
 Both scripts import `chatlens_links.py` from the repository root and take the same option,
