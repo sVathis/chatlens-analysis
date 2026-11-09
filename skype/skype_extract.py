@@ -10,10 +10,12 @@ import hashlib
 import html
 from html.parser import HTMLParser
 import json
-import os
 from pathlib import Path
 import re
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from extract_utils import ExtractionWriteError, safe_filename, write_outputs
 
 
 class SkypeHTML(HTMLParser):
@@ -92,15 +94,6 @@ def build_markdown(c, messages, account):
     return "\n".join(lines)
 
 
-def safe_filename(value):
-    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
-    value = value[:80].rstrip(" .") or "conversation"
-    if re.fullmatch(r"(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])",
-                    value.split(".", 1)[0], re.IGNORECASE):
-        value = "_" + value
-    return value
-
-
 def folder_name(conversation, index, conversations):
     """Use an ID-derived suffix; source index disambiguates missing or duplicate IDs."""
     identifier = conversation.get("id")
@@ -109,45 +102,6 @@ def folder_name(conversation, index, conversations):
     identity = f"id:{id_text}" if id_text and not duplicate else f"index:{index}:id:{id_text}"
     digest = hashlib.sha256(identity.encode("utf-8", errors="surrogatepass")).hexdigest()[:16]
     return f"{safe_filename(conversation_name(conversation))} [{digest}]"
-
-
-class ExtractionWriteError(Exception):
-    """An output write failed; the message reports the cleanup result."""
-
-
-def write_outputs(outputs):
-    """Create private files exclusively; remove this run's files if any write fails."""
-    created = []
-    try:
-        for path, contents in outputs:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
-            fd = os.open(path, flags, 0o600)
-            created.append(path)
-            try:
-                remaining = memoryview(contents)
-                while remaining:
-                    written = os.write(fd, remaining[:1048576])
-                    if written <= 0:
-                        raise OSError("write returned no bytes")
-                    remaining = remaining[written:]
-            finally:
-                os.close(fd)
-    except BaseException as exc:
-        cleanup_failed = []
-        for path in reversed(created):
-            try:
-                path.unlink()
-            except OSError:
-                cleanup_failed.append(path.name)
-        if cleanup_failed:
-            message = "Could not remove partial output: " + ", ".join(cleanup_failed)
-        else:
-            message = "Files created by this attempt were removed"
-        if not isinstance(exc, OSError):
-            if cleanup_failed:
-                print(message, file=sys.stderr)
-            raise
-        raise ExtractionWriteError(f"Cannot write extraction ({type(exc).__name__}). {message}.") from exc
 
 
 def main():

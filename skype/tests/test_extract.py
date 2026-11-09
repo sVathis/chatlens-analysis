@@ -216,7 +216,7 @@ class ExtractTests(unittest.TestCase):
             return real_write(fd, content)
         argv = [str(SCRIPT), str(self.source), '--contact', 'synthetic:1', '--output-dir', str(self.output)]
         err = io.StringIO()
-        with patch.object(sys, 'argv', argv), patch.object(extract.os, 'write', side_effect=fail_second_write), \
+        with patch.object(sys, 'argv', argv), patch.object(os, 'write', side_effect=fail_second_write), \
              contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
                 extract.main()
@@ -239,7 +239,7 @@ class ExtractTests(unittest.TestCase):
                 raise KeyboardInterrupt
             return real_write(fd, content)
         argv = [str(SCRIPT), str(self.source), '--contact', 'synthetic:1', '--output-dir', str(self.output)]
-        with patch.object(sys, 'argv', argv), patch.object(extract.os, 'write', side_effect=interrupt_second_write), \
+        with patch.object(sys, 'argv', argv), patch.object(os, 'write', side_effect=interrupt_second_write), \
              contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(KeyboardInterrupt):
                 extract.main()
