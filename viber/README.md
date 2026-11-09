@@ -20,7 +20,46 @@ export OPENAI_API_KEY=...        # in your shell, never in a file
 
 ## Usage
 
-Run these from the repository root (the script finds the shared `chatlens_links.py` there):
+Run these from the repository root (the scripts find the shared helpers there). Extraction is
+optional: the analyzer can select a chat directly from the full export.
+
+To extract one full chat first, list chats and select an exact chat ID or a contact from a
+direct chat:
+
+```bash
+python viber/viber_extract.py export/viber_export.json --list
+python viber/viber_extract.py export/viber_export.json --chat 10 --output-dir viber-extracted
+# Or: --contact viber:2  (an exact contact ID, name or part of a direct-chat title)
+```
+
+The extractor writes a single-chat `viber_export.json` and chronological `conversation.md`
+under an ID-suffixed folder. It keeps all participants, messages, captions, replies, reactions
+and other selected-chat fields; contacts are limited to those referenced by the chat or self.
+Other top-level export metadata is retained. `--contact` searches direct chats only and
+refuses ambiguous matches; use `--chat` to choose a specific direct, group or community chat.
+`--split year` or `--split month` splits only the Markdown. Reaction-event details remain in
+the JSON; the Markdown is a reading copy and raw text can resemble message headings.
+
+Extraction runs locally without an API key. Media paths are retained, but media files are not
+copied; keep the original export and media folder for viewing attachments. Existing output is
+never overwritten. On POSIX systems, extracted files are owner-only; on Windows, access depends
+on the output folder's ACL. The extractor reads the full export into memory. Both the source and
+extracted files are private. If extraction is forcibly terminated, inspect the output folder for
+partial files before retrying.
+
+To analyze the extracted chat, use its `viber_export.json` path below; because it has one chat,
+`--chat` is optional. For an existing analysis, keep using its original input file: extracting or
+re-serializing changes the source hash and prevents resuming its cached batches.
+
+```bash
+python viber/viber_analyze.py --input 'viber-extracted/EXTRACTED_FOLDER/viber_export.json' --list-senders
+python viber/viber_analyze.py --input 'viber-extracted/EXTRACTED_FOLDER/viber_export.json' --sender viber:2
+```
+
+Replace `EXTRACTED_FOLDER` with the path printed by the extractor and `viber:2` with the exact
+sender ID from the list.
+
+To analyze the full export directly:
 
 ```bash
 # 1. Which chats are in the export? (ID, type, title; no network)

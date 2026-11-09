@@ -39,11 +39,12 @@ chatlens_links.py          shared: builds the ChatLens links used in the reports
 deep_link_contract.json    shared: the URL format, copied from ChatLens
 test_chatlens_links.py     tests for the shared helper
 requirements.txt           dependencies for both analyses
-viber/                     the Viber analysis (its own README)
+extract_utils.py           shared private extraction-output helpers
+viber/                     the Viber extractor and analysis (its own README)
 skype/                     the Skype extractor and analysis (README, tests and requirements)
 ```
 
-Both scripts import `chatlens_links.py` from the repository root and take the same option,
+Both analysis scripts import `chatlens_links.py` from the repository root and take the same option,
 `--chatlens-url`: the address you open ChatLens at, used for the "View in ChatLens" link of
 each finding (report links open in a tab named `chatlens`). Run the Viber script from the
 root (`python viber/viber_analyze.py ...`); the Skype script as its README describes.
