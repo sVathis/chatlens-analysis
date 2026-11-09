@@ -169,8 +169,8 @@ def list_chats(data):
         count = len(chat.get("messages") or [])
         chat_id = f"viber:{chat.get('id')}"
         kind = str(chat.get("type") or "")
-        title = str(chat.get("title") or "")
-        if any(SURROGATE.search(value) for value in (chat_id, kind, title)):
+        title = SURROGATE.sub("\ufffd", str(chat.get("title") or ""))
+        if any(SURROGATE.search(value) for value in (chat_id, kind)):
             raise AnalysisError("A chat listing field contains an unpaired Unicode surrogate.")
         lines.append(f"{count:>7}  {chat_id:<14} {kind:<10} {title}")
     return lines
@@ -549,6 +549,8 @@ def _run_tasks(client, args, msgs, batches, tasks, cache, state):
                     flush=True,
                 )
                 continue
+            # Printing from the signal handler can fail during reentrant I/O;
+            # retry here after a request completes if it did not announce there.
             if state["interrupted"] and not state["announced"]:
                 print("Interrupted: finishing active requests and caching their results "
                       "(no new batches will start).", file=sys.stderr, flush=True)

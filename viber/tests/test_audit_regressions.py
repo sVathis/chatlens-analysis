@@ -47,6 +47,20 @@ class CacheIntegrityTests(unittest.TestCase):
             mod.read_run_config(path)
 
 class ExportRobustnessTests(unittest.TestCase):
+    def test_chat_listing_replaces_surrogates_in_titles_only_for_display(self):
+        data = {'format': 'viberpc-export', 'version': 1,
+                'chats': [{'id': 1, 'title': 'bad\ud800 title', 'messages': []},
+                          {'id': 2, 'title': 'normal title', 'messages': []}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'export.json'
+            path.write_text(json.dumps(data), encoding='utf-8')
+            with quiet() as (out, _err):
+                mod.main(['--input', str(path), '--list-chats'])
+            self.assertIn('bad\ufffd title', out.getvalue())
+            self.assertIn('normal title', out.getvalue())
+            self.assertNotIn('\ud800', out.getvalue())
+            self.assertEqual(mod.read_export(path)[0]['chats'][0]['title'], 'bad\ud800 title')
+
     def test_nul_is_preserved_and_surrogates_identify_the_message_without_text(self):
         messages = mod.build_messages({}, {'id': 7, 'messages': [{'kind': 'text', 'text': 'a\x00b'}]})
         self.assertEqual(messages[0]['text'], 'a\x00b')
