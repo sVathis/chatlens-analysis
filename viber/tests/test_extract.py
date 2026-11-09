@@ -87,7 +87,7 @@ class ExtractTests(unittest.TestCase):
         extracted, _digest = analyze.read_export(path)
         self.assertEqual(extracted['chats'], [data['chats'][0]])
         self.assertEqual(extracted['self'], data['self'])
-        self.assertEqual(extracted['other_metadata'], data['other_metadata'])
+        self.assertNotIn('other_metadata', extracted)
         self.assertEqual(set(extracted['contacts']), {'1', '2'})
         self.assertNotIn('Unrelated synthetic', path.read_text(encoding='utf-8'))
         self.assertEqual(self.source.read_bytes(), source_bytes)
@@ -114,6 +114,23 @@ class ExtractTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 path = self.folder(data, output=output) / 'viber_export.json'
                 self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['chats'][0]['id'], 10)
+
+    def test_contact_prefers_exact_name_and_falls_back_to_numeric_number(self):
+        data = export_data()
+        data['contacts']['2'] = {'name': 'Synthetic', 'number': '555123'}
+        data['contacts']['3'] = {'name': 'Synthetic Longer'}
+        self.assertEqual(extract.select_contact(data, 'Synthetic')['id'], 10)
+        self.assertEqual(extract.select_contact(data, '555123')['id'], 10)
+
+    def test_markdown_includes_structured_context(self):
+        raw = {'kind': 'link', 'link': {'url': 'https://example.test/'},
+               'location': {'lat': 1, 'lon': 2}, 'edited': True}
+        msg = {'source_index': 0, 'name': '', 'sender': '', 'time': '', 'viber_id': '1',
+               'kind': 'link', 'reply_to': ''}
+        markdown = extract.build_markdown({'id': 1}, [msg], [raw])
+        self.assertIn('https://example.test/', markdown)
+        self.assertIn('Location:', markdown)
+        self.assertIn('Flags: edited', markdown)
 
     def test_ambiguous_contact_requires_chat_id(self):
         data = export_data()
@@ -240,6 +257,24 @@ class ExtractTests(unittest.TestCase):
         self.assertIn('Files created by this attempt were removed', err.getvalue())
         self.assertEqual(sorted(p.name for p in folder.iterdir()), ['unrelated.txt'])
         self.assertEqual(keep.read_text(encoding='utf-8'), 'synthetic')
+
+    def test_failed_write_removes_new_directories(self):
+        data = export_data()
+        self.write_source(data)
+        with patch.object(extract, 'write_outputs', side_effect=extract.ExtractionWriteError('failure')), \
+             contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                extract.main([str(self.source), '--chat', '10', '--output-dir', str(self.output / 'nested')])
+        self.assertFalse(self.output.exists())
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX permissions')
+    def test_created_directories_are_private(self):
+        data = export_data()
+        self.write_source(data)
+        result = self.run_extract('--chat', '10', '--output-dir', str(self.output / 'nested'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for directory in (self.output, self.output / 'nested', self.folder(data, output=self.output / 'nested')):
+            self.assertEqual(directory.stat().st_mode & 0o077, 0)
 
     def test_listing_and_extraction_have_no_openai_import_or_network(self):
         data = export_data()

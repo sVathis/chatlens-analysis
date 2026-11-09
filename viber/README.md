@@ -35,10 +35,13 @@ python viber/viber_extract.py export/viber_export.json --chat 10 --output-dir vi
 The extractor writes a single-chat `viber_export.json` and chronological `conversation.md`
 under an ID-suffixed folder. It keeps all participants, messages, captions, replies, reactions
 and other selected-chat fields; contacts are limited to those referenced by the chat or self.
-Other top-level export metadata is retained. `--contact` searches direct chats only and
+Unknown top-level export fields are omitted. `--contact` searches direct chats only and
 refuses ambiguous matches; use `--chat` to choose a specific direct, group or community chat.
-`--split year` or `--split month` splits only the Markdown. Reaction-event details remain in
+`--split year` or `--split month` splits only the Markdown using UTC dates. Reaction-event details remain in
 the JSON; the Markdown is a reading copy and raw text can resemble message headings.
+Contact retention follows ViberPC-Export version 1: self and member IDs, message author and
+call peer IDs, and reaction-event authors. Version 1 reply references are message IDs, while
+contact cards contain names and numbers. Unknown future nested contact references are not inferred.
 
 Extraction runs locally without an API key. Media paths are retained, but media files are not
 copied; keep the original export and media folder for viewing attachments. Existing output is

@@ -68,22 +68,24 @@ def select_contact(data, query):
     is_id = folded.startswith('viber:') or folded.isdecimal()
     wanted = folded[6:] if folded.startswith('viber:') else folded
     contacts = data.get('contacts') if isinstance(data.get('contacts'), dict) else {}
-    matches = []
+    id_matches, exact_matches, partial_matches = [], [], []
     for chat in data['chats']:
         if not isinstance(chat, dict) or chat.get('type') != 'direct':
             continue
         others = other_contact_ids(data, chat)
-        if is_id:
-            matched = any(value.casefold() == wanted for value in others)
-        else:
-            labels = [str(chat.get('title') or '')]
-            for contact_id in others:
-                card = contacts.get(contact_id)
-                if isinstance(card, dict):
-                    labels.extend(str(card.get(field) or '') for field in ('name', 'number'))
-            matched = any(folded in label.casefold() for label in labels)
-        if matched:
-            matches.append(chat)
+        if is_id and any(value.casefold() == wanted for value in others):
+            id_matches.append(chat)
+        labels = [str(chat.get('title') or '')]
+        for contact_id in others:
+            card = contacts.get(contact_id)
+            if isinstance(card, dict):
+                labels.extend(str(card.get(field) or '') for field in ('name', 'number'))
+        labels = [label.casefold() for label in labels]
+        if folded in labels:
+            exact_matches.append(chat)
+        elif any(folded in label for label in labels):
+            partial_matches.append(chat)
+    matches = id_matches or exact_matches or partial_matches
     if len(matches) != 1:
         ids = ', '.join(f"viber:{chat.get('id')}" for chat in matches)
         suffix = f' Matching chat IDs: {ids}.' if ids else ''
@@ -95,7 +97,7 @@ def extracted_export(data, chat):
     """Preserve the chat and metadata while omitting unrelated contacts and chats."""
     if data.get('contacts') is not None and not isinstance(data['contacts'], dict):
         raise AnalysisError('Export contacts must be an object')
-    result = {key: value for key, value in data.items() if key != 'chats'}
+    result = {key: data[key] for key in ('format', 'version', 'exportedAt', 'self', 'contacts') if key in data}
     if isinstance(data.get('contacts'), dict):
         used = contact_ids(data, chat)
         result['contacts'] = {key: value for key, value in data['contacts'].items() if str(key) in used}
@@ -143,8 +145,20 @@ def build_markdown(chat, messages, raw_messages):
         if message['reply_to']:
             lines += ['', 'Reply:', '', message['reply_to']]
         lines += ['', message_body(raw, message['kind'])]
+        if message['kind'] == 'call' and raw.get('peerId') is not None:
+            lines += ['', f"Call peer ID: viber:{raw['peerId']}"]
+        if isinstance(raw.get('outgoing'), bool):
+            lines += ['', 'Direction: ' + ('outgoing' if raw['outgoing'] else 'incoming')]
+        for field in ('call', 'location', 'contact', 'link', 'reactions'):
+            if raw.get(field):
+                lines += ['', f'{field.title()}: {json.dumps(raw[field], ensure_ascii=False)}']
+        flags = [field for field in ('edited', 'forwarded') if raw.get(field) is True]
+        if flags:
+            lines += ['', 'Flags: ' + ', '.join(flags)]
         for field in ('media', 'sticker'):
             reference = raw.get(field)
+            if isinstance(reference, dict) and reference.get('durationMs') is not None:
+                lines += ['', f"{field.title()} duration (ms): {reference['durationMs']}"]
             if isinstance(reference, dict) and isinstance(reference.get('path'), str):
                 lines += ['', f"{field.title()} reference: `{reference['path']}`"]
         lines += ['', '---', '']
@@ -191,8 +205,28 @@ def main(argv=None):
         for path, _contents in outputs:
             if path.exists() or path.is_symlink():
                 raise AnalysisError(f'Output already exists: {path}. Choose a different --output-dir.')
-        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        write_outputs(outputs)
+        missing = []
+        current = folder
+        while not current.exists():
+            missing.append(current)
+            current = current.parent
+        created = []
+        try:
+            for directory in reversed(missing):
+                try:
+                    directory.mkdir(mode=0o700)
+                    created.append(directory)
+                except FileExistsError:
+                    if not directory.is_dir():
+                        raise
+            write_outputs(outputs)
+        except BaseException:
+            for directory in reversed(created):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            raise
     except UnicodeEncodeError:
         parser.error('Selected chat contains an unpaired Unicode surrogate; no output files were written')
     except (AnalysisError, ExtractionWriteError, OSError) as exc:
