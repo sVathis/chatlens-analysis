@@ -52,6 +52,9 @@ SCHEMA = {
     }, 'required': ['findings']
 }
 
+class AnalysisError(ValueError):
+    """An expected input or cache error safe to show without a traceback."""
+
 class TextExtractor(html.parser.HTMLParser if hasattr(html, 'parser') else __import__('html.parser', fromlist=['HTMLParser']).HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -80,11 +83,11 @@ def timestamp(m):
 
 def load(path):
     with path.open(encoding='utf-8-sig') as f: source = json.load(f)
-    if not isinstance(source, dict): raise ValueError('Expected Skype export object')
+    if not isinstance(source, dict): raise AnalysisError('Expected Skype export object')
     convs = source.get('conversations')
-    if not isinstance(convs, list): raise ValueError('Expected top-level conversations list')
+    if not isinstance(convs, list): raise AnalysisError('Expected top-level conversations list')
     if len(convs) != 1:
-        raise ValueError(f'Expected one extracted conversation, found {len(convs)}. Use skype_extract.py first.')
+        raise AnalysisError(f'Expected one extracted conversation, found {len(convs)}. Use skype_extract.py first.')
     raw = convs[0].get('MessageList') or []
     messages = []
     # Stable keys even for messages without IDs, computed using original order.
@@ -103,7 +106,7 @@ def get_conversation_id(path):
         source = json.load(f)
     conversations = source.get('conversations') or []
     if len(conversations) != 1 or not isinstance(conversations[0], dict):
-        raise ValueError('Expected exactly one extracted Skype conversation')
+        raise AnalysisError('Expected exactly one extracted Skype conversation')
     return str(conversations[0].get('id') or '')
 
 
@@ -150,9 +153,6 @@ def write_json(path, obj):
     temp = path.with_suffix(path.suffix+'.tmp')
     temp.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding='utf-8')
     temp.replace(path)
-
-class AnalysisError(ValueError):
-    """An expected input or cache error safe to show without a traceback."""
 
 def read_cached_batch(path, number, start, end, msgs, sender):
     """Reject corrupt or mismatched cache records before counting coverage."""
@@ -446,7 +446,7 @@ def make_report(args,msgs,batches):
     root = args.output
     conversation_id = get_conversation_id(args.input)
     if args.chatlens_url and not conversation_id:
-        raise ValueError('No original conversation ID found in input JSON; cannot build ChatLens links')
+        raise AnalysisError('No original conversation ID found in input JSON; cannot build ChatLens links')
     by_key = {m['key']:(i,m) for i,m in enumerate(msgs)}
     issues, findings, covered, usage = [], [], set(), Counter()
     for number,(start,left,right,end) in enumerate(batches,1):
@@ -597,5 +597,5 @@ def main():
 if __name__=='__main__':
     try:
         main()
-    except AnalysisError as exc:
+    except (AnalysisError, json.JSONDecodeError) as exc:
         sys.exit(str(exc))
