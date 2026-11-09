@@ -52,6 +52,9 @@ SCHEMA = {
     }, 'required': ['findings']
 }
 
+class AnalysisError(ValueError):
+    """An expected input or cache error safe to show without a traceback."""
+
 class TextExtractor(html.parser.HTMLParser if hasattr(html, 'parser') else __import__('html.parser', fromlist=['HTMLParser']).HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -80,11 +83,11 @@ def timestamp(m):
 
 def load(path):
     with path.open(encoding='utf-8-sig') as f: source = json.load(f)
-    if not isinstance(source, dict): raise ValueError('Expected Skype export object')
+    if not isinstance(source, dict): raise AnalysisError('Expected Skype export object')
     convs = source.get('conversations')
-    if not isinstance(convs, list): raise ValueError('Expected top-level conversations list')
+    if not isinstance(convs, list): raise AnalysisError('Expected top-level conversations list')
     if len(convs) != 1:
-        raise ValueError(f'Expected one extracted conversation, found {len(convs)}. Use skype_extract.py first.')
+        raise AnalysisError(f'Expected one extracted conversation, found {len(convs)}. Use skype_extract.py first.')
     raw = convs[0].get('MessageList') or []
     messages = []
     # Stable keys even for messages without IDs, computed using original order.
@@ -103,7 +106,7 @@ def get_conversation_id(path):
         source = json.load(f)
     conversations = source.get('conversations') or []
     if len(conversations) != 1 or not isinstance(conversations[0], dict):
-        raise ValueError('Expected exactly one extracted Skype conversation')
+        raise AnalysisError('Expected exactly one extracted Skype conversation')
     return str(conversations[0].get('id') or '')
 
 
@@ -151,8 +154,43 @@ def write_json(path, obj):
     temp.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding='utf-8')
     temp.replace(path)
 
+def read_cached_batch(path, number, start, end, msgs, sender):
+    """Reject corrupt or mismatched cache records before counting coverage."""
+    try:
+        record = json.loads(path.read_text(encoding='utf-8'))
+        valid = (isinstance(record, dict)
+            and type(record.get('batch')) is int and record['batch'] == number
+            and type(record.get('start')) is int and record['start'] == start
+            and type(record.get('end')) is int and record['end'] == end
+            and isinstance(record.get('findings'), list)
+            and all(isinstance(item, dict) and all(isinstance(item.get(field), str) for field in
+                ('message_key', 'quote', 'category', 'severity', 'confidence', 'reason', 'caveat'))
+                for item in record['findings'])
+            and isinstance(record.get('usage', {}), dict)
+            and not (record.get('skipped_no_target') and
+                     any(m['sender'] == sender and m['text'] for m in msgs[start:end])))
+    except (OSError, UnicodeError, ValueError):
+        valid = False
+    if not valid:
+        raise AnalysisError(f'Invalid cached batch {path}; remove it and rerun to retry that batch.')
+    return record
+
+def read_run_config(path):
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AnalysisError(f'Invalid run configuration {path}.') from exc
+
 class BatchFormatError(ValueError):
     """Response was incomplete, empty, or not valid structured JSON."""
+
+def batch_error_summary(exc):
+    """Keep useful diagnostics without logging arbitrary client exception text."""
+    if isinstance(exc, BatchFormatError):
+        return f'BatchFormatError: {exc}'
+    status = getattr(exc, 'status_code', None)
+    suffix = f' (HTTP {status})' if type(status) is int and 100 <= status <= 599 else ''
+    return type(exc).__name__ + suffix
 
 
 def request_batch(client, args, msgs, batch):
@@ -192,8 +230,11 @@ def request_batch(client, args, msgs, batch):
                 status = getattr(response, 'status', 'completed')
                 details = getattr(response, 'incomplete_details', None)
                 if status != 'completed':
+                    safe_status = status if status in ('incomplete', 'failed', 'cancelled', 'queued', 'in_progress') else 'unknown'
+                    reason = getattr(details, 'reason', None)
+                    safe_reason = reason if reason in ('max_output_tokens', 'content_filter') else 'unknown'
                     raise BatchFormatError(
-                        f'Response status={status}; incomplete_details={details}')
+                        f'Response status={safe_status}; incomplete reason={safe_reason}')
                 if not response.output_text:
                     raise BatchFormatError('Empty model response')
                 try:
@@ -258,10 +299,12 @@ def analyze(args, msgs):
                            args.batch_size, args.context)
     meta_path = root / 'run_config.json'
     if meta_path.exists():
-        existing = json.loads(meta_path.read_text(encoding='utf-8'))
+        existing = read_run_config(meta_path)
         if existing != expected:
             sys.exit('Configuration/source changed. Choose a NEW --output directory to prevent mixing results.')
     else:
+        if any(cache.glob('batch-*.json')):
+            raise AnalysisError('Cached batches exist without run_config.json; choose a new --output directory.')
         write_json(meta_path, expected)
 
     batches = plan_batches(msgs, args.batch_size, args.context)
@@ -276,6 +319,7 @@ def analyze(args, msgs):
     for number, (start, left, right, end) in enumerate(batches, 1):
         outfile = cache / f'batch-{number:05d}.json'
         if outfile.exists():
+            read_cached_batch(outfile, number, start, end, msgs, args.sender)
             cached += 1
             continue
         target = any(m['sender'] == args.sender and m['text'] for m in msgs[start:end])
@@ -335,8 +379,9 @@ def analyze(args, msgs):
                             print(f'Completed batch {number}/{len(batches)} '
                                   f'({completed}/{len(tasks)} new)', flush=True)
                         except Exception as exc:
-                            failures.append((number, str(exc)))
-                            print(f'ERROR batch {number}: {exc}', file=sys.stderr,
+                            detail = batch_error_summary(exc)
+                            failures.append((number, detail))
+                            print(f'ERROR batch {number}: {detail}', file=sys.stderr,
                                   flush=True)
                         # Keep the number of active requests bounded; stop
                         # scheduling new work after the first terminal failure.
@@ -401,13 +446,13 @@ def make_report(args,msgs,batches):
     root = args.output
     conversation_id = get_conversation_id(args.input)
     if args.chatlens_url and not conversation_id:
-        raise ValueError('No original conversation ID found in input JSON; cannot build ChatLens links')
+        raise AnalysisError('No original conversation ID found in input JSON; cannot build ChatLens links')
     by_key = {m['key']:(i,m) for i,m in enumerate(msgs)}
     issues, findings, covered, usage = [], [], set(), Counter()
     for number,(start,left,right,end) in enumerate(batches,1):
         path = root/'batches'/f'batch-{number:05d}.json'
         if not path.exists(): continue
-        record = json.loads(path.read_text(encoding='utf-8'))
+        record = read_cached_batch(path, number, start, end, msgs, args.sender)
         for k,v in record.get('usage',{}).items():
             if isinstance(v,(int,float)): usage[k] += v
         for m in msgs[start:end]: covered.add(m['key'])
@@ -543,10 +588,14 @@ def main():
     if not any(m['sender']==args.sender for m in msgs): ap.error('No messages found for this exact --sender ID')
     if args.report_only:
         if not args.output.exists(): ap.error('Output directory does not exist')
-        meta=json.loads((args.output/'run_config.json').read_text(encoding='utf-8'))
+        meta=read_run_config(args.output/'run_config.json')
         if meta != fingerprint(args.input,args.sender,args.model,args.batch_size,args.context):
             ap.error('Run config/source differs from cached analysis')
         make_report(args,msgs,plan_batches(msgs,args.batch_size,args.context))
     else: analyze(args,msgs)
 
-if __name__=='__main__': main()
+if __name__=='__main__':
+    try:
+        main()
+    except (AnalysisError, json.JSONDecodeError) as exc:
+        sys.exit(str(exc))
