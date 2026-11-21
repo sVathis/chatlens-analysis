@@ -40,6 +40,12 @@ def locate_quote(quote, text):
 
     ``how`` is ``"exact"`` (the quote is a substring) or ``"normalized"`` (only whitespace
     or Unicode form differs). Returns ``None`` if the quote is empty or not in the text.
+
+    Whitespace is compared as a run: the quote is cut into tokens at whitespace and the
+    tokens must appear in the source in the same order, separated by at least one
+    whitespace character of any kind. Punctuation stays attached to its token, so
+    whitespace added or removed next to punctuation is a difference, not a match
+    (``"a, b"`` does not match ``"a ,b"``, and ``"end. Next"`` does not match ``"end.Next"``).
     """
     if not isinstance(quote, str) or not isinstance(text, str) or not quote:
         return None

@@ -35,6 +35,15 @@ class LocateQuoteTests(unittest.TestCase):
             with self.subTest(quote=quote):
                 self.assertIsNone(locate_quote(quote, text))
 
+    def test_whitespace_next_to_punctuation_must_agree_on_presence(self):
+        # Only the length and kind of a gap may differ. A gap may not appear or vanish.
+        for quote, text in (('Wait , what?', 'Wait, what?'), ('Wait, what?', 'Wait , what?'),
+                            ('end. Next', 'end.Next'), ('end.Next', 'end. Next'),
+                            ('say "hi"', 'say"hi"'), ('(one) two', '( one) two')):
+            with self.subTest(quote=quote, text=text):
+                self.assertIsNone(locate_quote(quote, text))
+        self.assertEqual(locate_quote('Wait, what?', 'Wait,\n  what?'), ('Wait,\n  what?', NORMALIZED))
+
     def test_words_are_not_joined_or_split(self):
         self.assertIsNone(locate_quote('one two', 'onetwo'))
         self.assertIsNone(locate_quote('onetwo', 'one two'))
