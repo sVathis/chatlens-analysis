@@ -3,7 +3,8 @@
 
 Reads the ``findings.json`` of one or more analysis output folders (``skype-analysis-1/``,
 ``viber-analysis-22/``, ...) and prints the findings sorted by severity, then category,
-then the model's confidence. It works offline and never calls an API.
+then the model's confidence. Findings that tie are listed run by run (in the order the folders
+are given) and then by time. It works offline and never calls an API.
 
 By default it prints no message text: only severity, category, confidence, time, message
 IDs and the link to open the message (the ChatLens link, or the ``history.html`` anchor when
@@ -39,7 +40,8 @@ def rank(value, order):
 
 def one_line(value, limit=200):
     """``value`` as one safe line for a terminal: control and direction characters become
-    spaces, lone surrogates become U+FFFD, runs of whitespace collapse, long text is cut."""
+    spaces, lone surrogates become U+FFFD, runs of whitespace collapse, and text longer than
+    ``limit`` characters is cut (``limit=None`` cuts nothing)."""
     pieces = []
     for char in str(value):
         category = unicodedata.category(char)
@@ -50,7 +52,9 @@ def one_line(value, limit=200):
         else:
             pieces.append(char)
     cleaned = " ".join("".join(pieces).split())
-    return cleaned if len(cleaned) <= limit else cleaned[: limit - 1] + "…"
+    if limit is None or len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1] + "…"
 
 
 def csv_safe(value):
@@ -184,7 +188,7 @@ def print_csv(selected):
     writer = csv.writer(sys.stdout, lineterminator="\n")
     writer.writerow(columns)
     for number, r in enumerate(selected, 1):
-        writer.writerow([number] + [csv_safe(r[name]) for name in
+        writer.writerow([number] + [csv_safe(one_line(r[name], None)) for name in
                                     ("run", "source", "severity", "confidence", "category", "time",
                                      "message_id", "key", "quote_match", "link")])
 

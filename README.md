@@ -59,7 +59,8 @@ root (`python viber/viber_analyze.py ...`); the Skype script as its README descr
 `triage_findings.py` lists the findings of one or more finished analyses (Skype or Viber, in
 any mix) in the order to read them: severity first, then category (threat, direct insult,
 personal accusation, belittling, hostile criticism, sarcasm, other), then the model's
-confidence. It works offline and, by default, prints **no message text**: only the counts, the
+confidence; findings that tie are listed run by run, in the order you give the folders, and then
+by time. It works offline and, by default, prints **no message text**: only the counts, the
 labels, the message IDs and the link that opens each message (the ChatLens link, or the
 `history.html` anchor when the run had no `--chatlens-url`).
 

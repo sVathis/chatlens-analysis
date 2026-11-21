@@ -64,7 +64,16 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(keys('--min-confidence', 'high'), {'ma', 'mb', 'mc', 'md'})
         self.assertEqual([r['message_key'] for r in self.rows(run, '--limit', '2')], ['mc', 'me'])
 
-    def test_skype_and_viber_runs_are_told_apart_and_ties_keep_input_order(self):
+    def test_ties_go_by_run_order_then_time(self):
+        skype = self.write_run('skype-analysis-1', [
+            finding('m2', 'high', 'threat', time='2024-01-02T00:00:00Z'),
+            finding('m1', 'high', 'threat', time='2024-01-01T00:00:00Z')])
+        viber = self.write_run('viber-analysis-22', [
+            finding('m3', 'high', 'threat', source='viber', time='2023-01-01T00:00:00Z')])
+        self.assertEqual([r['message_key'] for r in self.rows(skype, viber)], ['m1', 'm2', 'm3'])
+        self.assertEqual([r['message_key'] for r in self.rows(viber, skype)], ['m3', 'm1', 'm2'])
+
+    def test_skype_and_viber_runs_are_told_apart_and_ties_follow_the_given_order(self):
         skype = self.write_run('skype-analysis-1', [finding('m1', 'high', 'threat', ident='S1')])
         viber = self.write_run('viber-analysis-22', [
             finding('m2', 'high', 'threat', source='viber', ident='V2')])
@@ -117,6 +126,15 @@ class TriageTests(unittest.TestCase):
         self.assertNotIn('synthetic reason', output)
         [row] = csv.DictReader(io.StringIO(output))
         self.assertEqual(row['message_id'], "'=1+1")
+
+    def test_csv_cells_are_cleaned_of_surrogates_and_control_characters(self):
+        run = self.write_run('skype-analysis-1', [
+            finding('m1', 'high', 'threat', ident='a\ud800b\x1b[0m')])
+        output = self.run_main('--format', 'csv', run)
+        self.assertNotIn('\ud800', output)
+        self.assertNotIn('\x1b', output)
+        [row] = csv.DictReader(io.StringIO(output))
+        self.assertEqual(row['message_id'], 'a�b [0m')
 
     def test_summary_table_counts(self):
         records, _runs = triage.collect([self.sample_run()])
