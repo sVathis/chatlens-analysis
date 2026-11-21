@@ -40,6 +40,8 @@ deep_link_contract.json    shared: the URL format, copied from ChatLens
 test_chatlens_links.py     tests for the shared helper
 quote_match.py             shared: finds a model's quote in the source message (exact, or whitespace/Unicode-form only)
 test_quote_match.py        tests for quote_match.py
+triage_findings.py         reading order for the findings of Skype and Viber analyses
+test_triage_findings.py    tests for triage_findings.py
 requirements.txt           dependencies for both analyses
 extract_utils.py           shared private extraction-output helpers
 viber/                     the Viber extractor and analysis (its own README)
@@ -52,10 +54,36 @@ each finding (report links open in a tab named `chatlens`). Run the Viber script
 root (`python viber/viber_analyze.py ...`); the Skype script as its README describes.
 `--skypelens-url` and the `skypelens_url` field no longer exist.
 
+## Reading the findings
+
+`triage_findings.py` lists the findings of one or more finished analyses (Skype or Viber, in
+any mix) in the order to read them: severity first, then category (threat, direct insult,
+personal accusation, belittling, hostile criticism, sarcasm, other), then the model's
+confidence; findings that tie are listed run by run, in the order you give the folders, and then
+by time. It works offline and, by default, prints **no message text**: only the counts, the
+labels, the message IDs and the link that opens each message (the ChatLens link, or the
+`history.html` anchor when the run had no `--chatlens-url`).
+
+```bash
+python triage_findings.py skype-analysis-1                          # counts and reading order
+python triage_findings.py skype-analysis-1 viber-analysis-22        # both together
+python triage_findings.py skype-analysis-1 --severity high --category threat,direct_insult
+python triage_findings.py skype-analysis-1 --min-confidence medium --limit 30
+python triage_findings.py skype-analysis-1 --summary-only
+python triage_findings.py skype-analysis-1 --quotes --reasons       # also show the model's text
+python triage_findings.py skype-analysis-1 --format csv > order.csv # labels, IDs and links only
+```
+
+The order is a reading order, not an assessment: the labels are the model's own, and every
+finding needs a human review of the message and its context. Message text shown with
+`--quotes` or `--reasons` has control and text-direction characters replaced and long text cut
+(`--text-length`). The CSV never contains message text, and cells that start with `=`, `+`,
+`-` or `@` are prefixed so spreadsheet software does not treat them as formulas.
+
 ## Tests
 
 ```bash
-python -m unittest discover -v              # the shared link helper
+python -m unittest discover -v              # the shared helpers (links, quotes, triage)
 python -m unittest discover -s skype/tests -v   # the Skype analysis
 python -m unittest discover -s viber/tests -v  # the Viber analysis
 ```
