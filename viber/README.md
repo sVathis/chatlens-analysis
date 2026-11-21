@@ -100,7 +100,12 @@ mix results: use a new `--output`. `--report-only` rebuilds the reports from the
 any API call.
 
 **Checks.** A finding is kept only if its message is in the batch's scored (TARGET) window,
-was written by the selected sender, and its quote appears word for word in that message.
+was written by the selected sender, and its quote appears word for word in that message. A
+quote that differs only in whitespace (extra spaces, line breaks, non-breaking spaces) or in how
+an accent is stored is still accepted, and the report then shows the message's own text, so a
+kept quote is always exactly what the sender wrote. Such findings have `"quote_match":
+"normalized"` in `findings.json` (`"exact"` otherwise). A quote with different words, letters
+or punctuation is rejected.
 Messages without text (photos, stickers, calls, locations, system notices) are context only.
 
 ## Differences from the Skype analysis

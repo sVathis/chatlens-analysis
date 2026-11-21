@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # pylint: disable-next=wrong-import-position
 from chatlens_links import CHATLENS_WINDOW_NAME, build_chatlens_url  # noqa: E402
+from quote_match import locate_quote  # noqa: E402
 
 PROMPT_VERSION = '2026-10-31-v1'
 INSTRUCTIONS = '''Είσαι προσεκτικός αναλυτής επικοινωνίας. Ελέγχεις μηνύματα γραμμένα στα ελληνικά.
@@ -462,12 +463,14 @@ def make_report(args,msgs,batches):
             if key not in allowed:
                 issues.append({'batch':number,'reason':'Outside TARGET or wrong sender','finding':item});continue
             i,m = by_key[key]
-            quote = item.get('quote','')
-            if not quote or quote not in m['text']:
+            located = locate_quote(item.get('quote',''), m['text'])
+            if located is None:
                 issues.append({'batch':number,'reason':'Quote not verbatim in source text','finding':item});continue
+            quote, quote_match = located
             context = [{'key':x['key'],'time':x['time'],'sender':x['name'], 'text':x['text']}
                        for x in msgs[max(0,i-2):min(len(msgs),i+3)]]
-            findings.append({**item,'time':m['time'],'sender_name':m['name'],
+            # The exact text of the message, not the model's copy of it.
+            findings.append({**item,'quote':quote,'quote_match':quote_match,'time':m['time'],'sender_name':m['name'],
                 'sender_id':m['sender'],'skype_id':m['skype_id'],
                 'source_index':m['source_index'],'context':context})
     # Deduplicate repeated keys and categories across edge cases.

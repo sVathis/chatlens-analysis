@@ -38,6 +38,8 @@ python -m pip install -r requirements.txt
 chatlens_links.py          shared: builds the ChatLens links used in the reports
 deep_link_contract.json    shared: the URL format, copied from ChatLens
 test_chatlens_links.py     tests for the shared helper
+quote_match.py             shared: finds a model's quote in the source message (exact, or whitespace/Unicode-form only)
+test_quote_match.py        tests for quote_match.py
 requirements.txt           dependencies for both analyses
 extract_utils.py           shared private extraction-output helpers
 viber/                     the Viber extractor and analysis (its own README)
