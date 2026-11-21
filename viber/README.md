@@ -2,7 +2,8 @@
 
 `viber_analyze.py` reads the `viber_export.json` that
 [ViberPC-Export](https://github.com/sVathis/ViberPC-Export) writes, analyses **one chat** and
-**one sender**, and writes the reports described below. Status: **not yet run on real data**.
+**one sender**, and writes the reports described below. Status: run end to end on a real chat, with
+the report links checked in ChatLens; findings are candidates for human review.
 
 > [!WARNING]
 > **Privacy.** Running an analysis sends the **text, sender names and times** of the selected

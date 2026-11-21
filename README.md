@@ -8,8 +8,8 @@ to the exact message in ChatLens.
 
 | Folder | Reads | Status |
 |---|---|---|
-| [`viber/`](viber/README.md) | `viber_export.json` from [ViberPC-Export](https://github.com/sVathis/ViberPC-Export) | **not yet run on real data** |
-| [`skype/`](skype/README.md) | a single extracted Skype conversation (`skype_extract.py` output) | in use; has its own tests |
+| [`viber/`](viber/README.md) | `viber_export.json` from [ViberPC-Export](https://github.com/sVathis/ViberPC-Export) | in use; run on a real chat, links checked in ChatLens; has its own tests |
+| [`skype/`](skype/README.md) | a single extracted Skype conversation (`skype_extract.py` output) | in use; run on a real conversation, links checked in ChatLens; has its own tests |
 
 > [!WARNING]
 > **Privacy.** Unlike ChatLens (which runs entirely in your browser), these scripts send data
