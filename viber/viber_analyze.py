@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # pylint: disable-next=wrong-import-position
 from chatlens_links import CHATLENS_WINDOW_NAME, build_chatlens_url  # noqa: E402
+from quote_match import locate_quote  # noqa: E402
 
 PROMPT_VERSION = "viber-2026-11-08-v1"
 EXPORT_FORMAT = "viberpc-export"
@@ -753,10 +754,11 @@ def collect_findings(args, msgs, batches):
                 issues.append({"batch": number, "reason": "Outside TARGET or wrong sender", "finding": item})
                 continue
             i, m = by_key[key]
-            quote = item.get("quote", "")
-            if not quote or quote not in m["text"]:
+            located = locate_quote(item.get("quote", ""), m["text"])
+            if located is None:
                 issues.append({"batch": number, "reason": "Quote not verbatim in source text", "finding": item})
                 continue
+            quote, quote_match = located
             context = [
                 {"key": x["key"], "time": x["time"], "sender": x["name"], "kind": x["kind"], "text": x["text"]}
                 for x in msgs[max(0, i - 2) : min(len(msgs), i + 3)]
@@ -764,6 +766,9 @@ def collect_findings(args, msgs, batches):
             findings.append(
                 {
                     **item,
+                    # The exact text of the message, not the model's copy of it.
+                    "quote": quote,
+                    "quote_match": quote_match,
                     "time": m["time"],
                     "sender_name": m["name"],
                     "sender_id": m["sender"],

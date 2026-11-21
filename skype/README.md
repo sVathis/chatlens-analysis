@@ -104,7 +104,7 @@ To reconstruct reports without calling the API again, supply the same options pl
 6. **Boundary context:** 5 adjacent messages are provided on each side. Messages with distant contextual references may require manual inspection.
 7. **Cost:** each uncached batch uses billable OpenAI API tokens. Token usage is accumulated in `summary.json`. Costs depend on the selected model and API pricing.
 8. **Data safety:** the original source and analysis results contain personal information. Restrict local access and do not publish these files.
-9. **Conservative output verification:** if the model alters a quotation, the finding is rejected and preserved separately for manual inspection. Such rejection is not proof that the underlying message is innocuous.
+9. **Conservative output verification:** if the model alters a quotation, the finding is rejected and preserved separately for manual inspection. Such rejection is not proof that the underlying message is innocuous. A quote that differs only in whitespace (extra spaces, line breaks, non-breaking spaces) or in how an accent is stored is accepted, and the report then shows the message's own text. Those findings have `"quote_match": "normalized"` in `findings.json` (`"exact"` otherwise); changed words, letters or punctuation are still rejected.
 10. **Spreadsheet formulas:** CSV fields preserve source data, so a value beginning with `=`, `+`, `-`, or `@` may be interpreted as a formula by spreadsheet software. Import those fields as text or use the JSON output.
 11. **Markdown HTML:** `report.md` preserves untrusted text, which may include raw HTML. Use a Markdown viewer that sanitizes HTML, or open the escaped `report.html` instead.
 
