@@ -7,8 +7,8 @@ the same reports as the Skype and Viber analyses. Each finding links to the emai
 findings are candidates for human review.
 
 > [!WARNING]
-> **Privacy.** Running an analysis sends the **new text, sender names and addresses, subjects
-> and times** of the extracted emails, in batches, to the OpenAI API (see the
+> **Privacy.** Running an analysis sends the **new text, sender names and addresses, recipient
+> addresses (To, Cc, and yours), subjects and times** of the extracted emails, in batches, to the OpenAI API (see the
 > [main README](../README.md)). Extraction, `--list-senders` and `--report-only` never use the
 > network. The mbox, the extracted folder and the output folder hold private email: keep them
 > out of version control (they are in `.gitignore`).
@@ -77,8 +77,12 @@ python gmail/gmail_analyze.py --input 'gmail-extracted/FOLDER/conversation.json'
 
 Replace `FOLDER` with the folder the extractor printed. Batches default to 15 emails with
 4 neighbouring emails of context on each side (`--batch-size`, `--context`), because emails are
-longer than chat messages. Each email goes to the model with its thread number and subject, so
-the model can tell where one conversation ends and the next begins.
+longer than chat messages. Each email goes to the model with its thread number, subject and recipients (To and Cc),
+together with your own addresses (the extract's `self`, from the Sent label or `--self`), so
+the model can tell where one conversation ends and the next begins, and whether a sentence is
+addressed to you or to someone else on the email. Language aimed only at another recipient or at a
+third person is not a finding; when it is unclear who is meant (you only in Cc, several
+recipients), the finding says so in its caveat with a lower confidence.
 
 `--gmail-account` selects which signed-in Gmail account the links open: its number in the
 `/mail/u/N/` address (default `0`), or its address. The link is
@@ -103,8 +107,15 @@ specific to email: quote removal relies on the formats above, so an unusual clie
 leave quoted text in place (the reading copy shows it); everything after a reply header is
 removed, so text written below the quote (bottom-posting, or answers between quoted lines after
 an "On … wrote:" line) is removed with it; attachments and images are not
-analysed; an email longer than 30,000 characters is cut; context at a batch edge can come from
+analysed; an email longer than 30,000 characters is cut; a reply header is recognised only with an
+attribution's structure (an email address, or a date with a year and a time), so an unusual
+header without either is kept as text; context at a batch edge can come from
 the neighbouring thread (it is marked with its thread number).
+
+CSV fields keep their original values, as in the Skype and Viber analyses: spreadsheet
+software may read a subject, name or quote that begins with `=`, `+`, `-` or `@` as a formula.
+Import `findings.csv` as text, or use `findings.json`. (`triage_findings.py --format csv` has no
+message text and neutralises such cells.)
 
 ## Tests
 

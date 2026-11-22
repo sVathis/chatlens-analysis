@@ -44,7 +44,8 @@ def extract():
         'sender': ALICE, 'self': [ME],
         'threads': [
             {'id': 't1', 'subject': 'Πρώτο', 'messages': [
-                email(0, ALICE, 'Είσαι εντελώς ανίκανος.', '2024-01-01T10:00:00Z'),
+                email(0, ALICE, 'Είσαι εντελώς ανίκανος.', '2024-01-01T10:00:00Z',
+                      to=['Me@Example.org'], cc=['carol@example.net']),
                 email(1, ME, 'Δεν συμφωνώ.', '2024-01-01T11:00:00Z'),
                 email(2, ALICE, 'Καλή συνέχεια.', '2024-01-01T12:00:00Z', attachments=['a.pdf']),
             ]},
@@ -135,6 +136,18 @@ class ReadingTests(TempCase):
         self.assertEqual(msgs[0]['thread_id'], 't1')
         self.assertEqual(msgs[0]['sender'], ALICE)
         self.assertEqual(msgs[2]['attachments'], 1)
+        self.assertEqual(msgs[0]['to'], [ME])
+        self.assertEqual(msgs[0]['cc'], ['carol@example.net'])
+        self.assertEqual(msgs[1]['to'], [])
+        self.assertEqual(mod.user_addresses(data), [ME])
+
+    def test_odd_address_fields_become_empty_lists(self):
+        data = extract()
+        data['self'] = 'me@example.org'
+        data['threads'][0]['messages'][0]['to'] = 'x@example.com'
+        data['threads'][0]['messages'][0]['cc'] = [None, 3, ' ']
+        msgs = mod.build_messages(data)
+        self.assertEqual((msgs[0]['to'], msgs[0]['cc'], mod.user_addresses(data)), ([], [], []))
 
     def test_rejects_what_is_not_an_extract(self):
         good = extract()
@@ -158,8 +171,12 @@ class ReadingTests(TempCase):
 
     def test_payload_has_thread_subject_and_roles(self):
         msgs = mod.build_messages(extract())
-        payload = json.loads(mod.payload(msgs, 1, 0, 4, 3, ALICE))
+        payload = json.loads(mod.payload(msgs, 1, 0, 4, 3, ALICE, [ME]))
         self.assertEqual(payload['analyze_only_sender_id'], ALICE)
+        self.assertEqual(payload['user_addresses'], [ME])
+        self.assertEqual(payload['messages'][0]['to'], [ME])
+        self.assertEqual(payload['messages'][0]['cc'], ['carol@example.net'])
+        self.assertIn('user_addresses', mod.INSTRUCTIONS)
         self.assertEqual([m['role'] for m in payload['messages']],
                          ['CONTEXT', 'TARGET', 'TARGET', 'CONTEXT'])
         self.assertEqual(payload['messages'][0]['thread'], 1)
@@ -171,6 +188,7 @@ class ReadingTests(TempCase):
 class AnalyzeTests(TempCase):
     def run_analyze(self, answer, **over):
         args = self.args(**over)
+        args.user_addresses = [ME]
         msgs = mod.build_messages(extract())
         client = FakeClient(answer)
         with quiet():
@@ -199,6 +217,7 @@ class AnalyzeTests(TempCase):
         self.assertEqual(f['gmail_message_id'], '<e0@example.test>')
         self.assertEqual(f['gmail_thread_id'], 't1')
         self.assertEqual(f['subject'], 'Πρώτο')
+        self.assertEqual((f['to'], f['cc']), ([ME], ['carol@example.net']))
         self.assertEqual(f['gmail_url'],
                          'https://mail.google.com/mail/u/0/#search/rfc822msgid%3Ae0%40example.test')
         self.assertEqual(f['source_url'], 'history.html#m0000000')
@@ -215,6 +234,9 @@ class AnalyzeTests(TempCase):
             self.assertTrue((out / name).exists(), name)
         self.assertEqual(client.kwargs[0]['store'], False)
         self.assertEqual(client.kwargs[0]['text']['format']['name'], 'email_findings')
+        self.assertEqual(json.loads(client.kwargs[0]['input'])['user_addresses'], [ME])
+        report = (out / 'report.html').read_text(encoding='utf-8')
+        self.assertIn('carol@example.net', report)
 
     def test_batches_without_sender_text_are_not_sent(self):
         # batch 3 holds only m0000004, Alice's email without text
@@ -276,6 +298,7 @@ class CommandLineTests(TempCase):
         with patch.object(mod, 'analyze') as fake:
             self.run_main('--input', self.input, '--sender', 'Alice@Example.COM')
         self.assertEqual(fake.call_args[0][0].sender, ALICE)
+        self.assertEqual(fake.call_args[0][0].user_addresses, [ME])
 
 
 if __name__ == '__main__':

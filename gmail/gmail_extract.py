@@ -76,16 +76,44 @@ def tidy(text):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip("\n")
 
 
-# Lines that start the quoted part of a reply or a forwarded message. Everything from the
-# first of them on was written by someone else (or earlier) and is removed. An attribution
-# line may be wrapped, so up to two more lines may follow before "wrote:" / "έγραψε:".
+# A reply's attribution line ("On Mon, 1 Jan 2024 at 10:00, Name <a@b> wrote:", "Στις Δευ 1 Ιαν
+# 2024 στις 10:00, ο/η Name <a@b> έγραψε:", "Ο/Η Name <a@b> έγραψε στις ...:"). It may be wrapped
+# over two lines. Ordinary sentences can also start with "On"/"Στις" and end with "wrote:"/
+# "έγραψε:", so a line counts only with an attribution's structure: an email address, or a
+# date with a year together with a time. See find_attribution().
+ATTRIBUTION_START = re.compile(r"^[ \t]*(?:On|Στις)\b")
+ATTRIBUTION_END = re.compile(r"(?:\bwrote:|έγραψε[^\n]*:)[ \t]*$")
+ADDRESS = re.compile(r"[^\s<>@\"']+@[^\s<>@\"']+\.[^\s<>@\"']+")
+DATE_WITH_YEAR = re.compile(r"\b(?:19|20)\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b")
+TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
+
+
+def is_attribution(block):
+    return bool(ADDRESS.search(block)) or bool(DATE_WITH_YEAR.search(block) and TIME.search(block))
+
+
+def find_attribution(text):
+    """Offset of the first reply attribution in ``text``, or None."""
+    lines = text.split("\n")
+    offset = 0
+    for i, line in enumerate(lines):
+        for span in (1, 2):
+            block_lines = lines[i:i + span]
+            if len(block_lines) < span:
+                break
+            if span == 2 and ATTRIBUTION_END.search(block_lines[0]):
+                break  # a one-line attribution, already tried
+            block = "\n".join(block_lines)
+            opens = ATTRIBUTION_START.match(block_lines[0]) or "<" in block and ADDRESS.search(block)
+            if opens and ATTRIBUTION_END.search(block_lines[-1]) and is_attribution(block):
+                return offset
+        offset += len(line) + 1
+    return None
+
+
+# Lines that start the quoted part of a reply or a forwarded message, besides the attribution.
+# Everything from the first of them on was written by someone else (or earlier) and is removed.
 QUOTE_HEADERS = [
-    # Gmail, Apple Mail, Thunderbird: "On Mon, 1 Jan 2024 at 10:00, Name <a@b> wrote:"
-    re.compile(r"^[ \t]*On\b[^\n]*(?:\n[^\n]*){0,2}?\bwrote:[ \t]*$", re.M),
-    # Greek Gmail: "Στις Δευ 1 Ιαν 2024 στις 10:00, ο/η Name <a@b> έγραψε:"
-    re.compile(r"^[ \t]*Στις\b[^\n]*(?:\n[^\n]*){0,2}?έγραψε:[ \t]*$", re.M),
-    # Other Greek clients: "Ο/Η Name έγραψε στις ...:" or "... ο χρήστης Name έγραψε:"
-    re.compile(r"^[ \t]*[^\n]{0,200}<[^<>\s]+@[^<>\s]+>[^\n]*(?:\n[^\n]*){0,1}?έγραψε[^\n]*:[ \t]*$", re.M),
     # Outlook and others: a separator line
     re.compile(r"^[ \t]*-{2,}[ \t]*(?:Original Message|Αρχικό μήνυμα)[ \t]*-{2,}[ \t]*$", re.M | re.I),
     # Forwarded messages (Gmail, English and Greek)
@@ -113,6 +141,9 @@ def strip_quoted(text):
     text = tidy(text)
     original = len(text)
     cut = len(text)
+    attribution = find_attribution(text)
+    if attribution is not None:
+        cut = attribution
     for pattern in QUOTE_HEADERS:
         found = pattern.search(text)
         if found and found.start() < cut:
@@ -227,7 +258,16 @@ def body_of(message):
     except (KeyError, AttributeError, ValueError):
         plain = html_part = None
     if plain is not None:
-        return part_text(plain), "plain"
+        text = part_text(plain)
+        if text.strip():
+            return text, "plain"
+        # An empty plain-text version next to an HTML one: the HTML holds the email
+        try:
+            html_part = message.get_body(preferencelist=("html",))
+        except (KeyError, AttributeError, ValueError):
+            html_part = None
+        if html_part is None:
+            return text, "plain"
     if html_part is not None:
         return html_to_text(part_text(html_part)), "html"
     if not message.is_multipart() and message.get_content_maintype() == "text":

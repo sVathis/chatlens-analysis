@@ -73,6 +73,25 @@ class StripQuotedTests(unittest.TestCase):
         text = 'On Monday I wrote: the report is late.\nOn second thought, fine.'
         self.assertEqual(self.own(text), text)
 
+    def test_narrative_text_with_wrote_is_kept(self):
+        for text in ('Στις 10/11 πήγα στο σχολείο.\nΗ δασκάλα έγραψε:\nΑυτό δεν ισχύει.',
+                     'On Monday the teacher\nwrote:\nThat is not true.',
+                     'On Monday the teacher wrote:\nThat is not true.',
+                     'Στις 10:00 η δασκάλα έγραψε:\nΤίποτα.'):
+            with self.subTest(text=text):
+                self.assertEqual(self.own(text), text)
+
+    def test_attributions_without_an_address_need_a_dated_time(self):
+        for header in ('On 1/1/2024 10:00, Alice wrote:',
+                       'On Monday, January 1, 2024 10:00 AM, Alice wrote:',
+                       'Στις Δευ 1 Ιαν 2024 στις 10:00 π.μ., ο/η Alice έγραψε:'):
+            with self.subTest(header=header):
+                self.assertEqual(self.own(f'Reply.\n\n{header}\n> old'), 'Reply.')
+
+    def test_greek_attribution_starting_with_the_name(self):
+        text = 'Απάντηση.\n\nΟ/Η Alice <alice@example.com> έγραψε στις 1/1/2024:\n> παλιό'
+        self.assertEqual(self.own(text), 'Απάντηση.')
+
     def test_windows_line_ends_and_blank_runs_are_tidied(self):
         self.assertEqual(self.own('a\r\n\r\n\r\n\r\nb  \r\n'), 'a\n\nb')
 
@@ -100,6 +119,26 @@ class HtmlTextTests(unittest.TestCase):
 
     def test_unclosed_and_stray_tags_do_not_break_it(self):
         self.assertEqual(mod.html_to_text('<p>One<p>Two</span></p><div>Three'), 'One\nTwo\nThree')
+
+
+class BodyTests(unittest.TestCase):
+    def test_an_empty_plain_part_falls_back_to_the_html_part(self):
+        msg = EmailMessage()
+        msg.set_content('')
+        msg.add_alternative('<p>Important message</p>', subtype='html')
+        self.assertEqual(mod.body_of(msg), ('Important message', 'html'))
+
+    def test_a_plain_part_with_text_is_preferred(self):
+        msg = EmailMessage()
+        msg.set_content('Plain text\n')
+        msg.add_alternative('<p>HTML text</p>', subtype='html')
+        self.assertEqual(mod.body_of(msg)[1], 'plain')
+        self.assertEqual(mod.body_of(msg)[0].strip(), 'Plain text')
+
+    def test_an_empty_plain_only_email_stays_empty(self):
+        msg = EmailMessage()
+        msg.set_content('')
+        self.assertEqual(mod.body_of(msg)[0].strip(), '')
 
 
 class TimeTests(unittest.TestCase):
