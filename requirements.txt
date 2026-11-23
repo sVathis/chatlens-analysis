@@ -1,2 +1,3 @@
 -r skype/requirements.txt
 -r viber/requirements.txt
+-r gmail/requirements.txt

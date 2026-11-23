@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List the findings of a Skype or Viber analysis in the order to read them.
+"""List the findings of a Skype, Viber or email analysis in the order to read them.
 
 Reads the ``findings.json`` of one or more analysis output folders (``skype-analysis-1/``,
 ``viber-analysis-22/``, ...) and prints the findings sorted by severity, then category,
@@ -7,7 +7,7 @@ then the model's confidence. Findings that tie are listed run by run (in the ord
 are given) and then by time. It works offline and never calls an API.
 
 By default it prints no message text: only severity, category, confidence, time, message
-IDs and the link to open the message (the ChatLens link, or the ``history.html`` anchor when
+IDs and the link to open the message (the ChatLens or Gmail link, or the ``history.html`` anchor when
 the run was made without ``--chatlens-url``). Add ``--quotes`` or ``--reasons`` to show the
 model's text as well. The order is a reading order, not an assessment: the labels are the
 model's own, and every finding needs a human review of the message and its context.
@@ -89,9 +89,11 @@ def make_record(item, order, run, base):
         source, message_id = "viber", text_of(item, "viber_id")
     elif "skype_id" in item:
         source, message_id = "skype", text_of(item, "skype_id")
+    elif "gmail_message_id" in item:
+        source, message_id = "gmail", text_of(item, "gmail_message_id")
     else:
         source, message_id = "unknown", ""
-    link = text_of(item, "chatlens_url")
+    link = text_of(item, "chatlens_url") or text_of(item, "gmail_url")
     if not link and text_of(item, "source_url"):
         link = str(base / text_of(item, "source_url"))
     return {

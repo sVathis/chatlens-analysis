@@ -19,6 +19,8 @@ conversation.md
 conversation-*.md
 skype-extracted/
 viber-extracted/
+gmail-extracted/
+*.mbox
 export/
 media/
 

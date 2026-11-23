@@ -10,6 +10,7 @@ to the exact message in ChatLens.
 |---|---|---|
 | [`viber/`](viber/README.md) | `viber_export.json` from [ViberPC-Export](https://github.com/sVathis/ViberPC-Export) | in use; run on a real chat, links checked in ChatLens; has its own tests |
 | [`skype/`](skype/README.md) | a single extracted Skype conversation (`skype_extract.py` output) | in use; run on a real conversation, links checked in ChatLens; has its own tests |
+| [`gmail/`](gmail/README.md) | the `.mbox` of a Google Takeout (Mail) export, via `gmail_extract.py` | new; tested on synthetic emails only; has its own tests |
 
 > [!WARNING]
 > **Privacy.** Unlike ChatLens (which runs entirely in your browser), these scripts send data
@@ -42,10 +43,11 @@ quote_match.py             shared: finds a model's quote in the source message (
 test_quote_match.py        tests for quote_match.py
 triage_findings.py         reading order for the findings of Skype and Viber analyses
 test_triage_findings.py    tests for triage_findings.py
-requirements.txt           dependencies for both analyses
+requirements.txt           dependencies for all analyses
 extract_utils.py           shared private extraction-output helpers
 viber/                     the Viber extractor and analysis (its own README)
 skype/                     the Skype extractor and analysis (README, tests and requirements)
+gmail/                     the email extractor (Google Takeout mbox) and analysis (README, tests and requirements)
 ```
 
 Both analysis scripts import `chatlens_links.py` from the repository root and take the same option,
@@ -56,13 +58,13 @@ root (`python viber/viber_analyze.py ...`); the Skype script as its README descr
 
 ## Reading the findings
 
-`triage_findings.py` lists the findings of one or more finished analyses (Skype or Viber, in
-any mix) in the order to read them: severity first, then category (threat, direct insult,
+`triage_findings.py` lists the findings of one or more finished analyses (Skype, Viber or email,
+in any mix) in the order to read them: severity first, then category (threat, direct insult,
 personal accusation, belittling, hostile criticism, sarcasm, other), then the model's
 confidence; findings that tie are listed run by run, in the order you give the folders, and then
 by time. It works offline and, by default, prints **no message text**: only the counts, the
 labels, the message IDs and the link that opens each message (the ChatLens link, or the
-`history.html` anchor when the run had no `--chatlens-url`).
+`history.html` anchor when the run had no `--chatlens-url`; for email, the Gmail link).
 
 ```bash
 python triage_findings.py skype-analysis-1                          # counts and reading order
@@ -86,9 +88,10 @@ finding needs a human review of the message and its context. Message text shown 
 python -m unittest discover -v              # the shared helpers (links, quotes, triage)
 python -m unittest discover -s skype/tests -v   # the Skype analysis
 python -m unittest discover -s viber/tests -v  # the Viber analysis
+python -m unittest discover -s gmail/tests -v  # the email analysis
 ```
 
-CI runs both on Python 3.10 and 3.13. `deep_link_contract.json` is copied from ChatLens,
+CI runs them all on Python 3.10 and 3.13. `deep_link_contract.json` is copied from ChatLens,
 where the same file pins the URL format: keep the two in step.
 
 ## Credits

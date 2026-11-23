@@ -46,3 +46,6 @@ jobs:
       - name: Tests (Viber)
         if: ${{ hashFiles('viber/tests/test_*.py') != '' }}
         run: python -m unittest discover -s viber/tests -v
+
+      - name: Tests (email)
+        run: python -m unittest discover -s gmail/tests -v
