@@ -474,6 +474,8 @@ def read_email(message, index):
         "from_name": name,
         "to": [a for _, a in addresses(message, "To")],
         "cc": [a for _, a in addresses(message, "Cc")],
+        # Present only in your own saved copy of an email you sent
+        "bcc": [a for _, a in addresses(message, "Bcc")],
         "subject": header(message, "Subject"),
         "in_reply_to": header(message, "In-Reply-To"),
         "labels": labels,
@@ -594,6 +596,8 @@ def build_markdown(extract):
                 lines.append(f"Message-ID: `{item['message_id']}`  ")
             if item["to"] or item["cc"]:
                 lines.append("To: " + ", ".join(item["to"] + item["cc"]) + "  ")
+            if item["bcc"]:
+                lines.append("Bcc: " + ", ".join(item["bcc"]) + "  ")
             if item["attachments"]:
                 lines.append("Attachments: " + ", ".join(item["attachments"]) + "  ")
             if item["removed_chars"]:

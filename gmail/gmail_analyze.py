@@ -8,7 +8,8 @@ findings.csv, report.html, report.md, history.html and summary.json. Every findi
 to the exact email in Gmail (a search for its Message-ID) and to history.html.
 
 Python 3.10+, pip install openai. PRIVACY: running an analysis sends the new text of the
-emails (with sender names and addresses, subjects and times) in batches to the OpenAI API.
+emails (with sender names and addresses, recipient addresses including Bcc, subjects and
+times) in batches to the OpenAI API.
 --list-senders and --report-only never use the network. Use it only on email you are
 entitled to analyse.
 
@@ -48,7 +49,7 @@ from quote_match import locate_quote  # noqa: E402
 
 PROMPT_VERSION = "gmail-2026-11-21-v2"
 # The prompt for your own emails (--sender is one of your addresses) has its own version.
-OWN_PROMPT_VERSION = "gmail-own-2026-11-24-v1"
+OWN_PROMPT_VERSION = "gmail-own-2026-11-24-v2"
 EXTRACT_FORMAT = "chatlens-gmail-extract"
 SUPPORTED_VERSION = 1
 GMAIL_WINDOW_NAME = "gmail"
@@ -66,8 +67,11 @@ AUDIENCE = ("Τα πεδία to και cc είναι οι παραλήπτες �
 OWN_PURPOSE = ("Σκοπός: Ο συγκεκριμένος αποστολέας είναι ο ίδιος ο χρήστης, δηλαδή ο κάτοχος των "
                "διευθύνσεων user_addresses. Εντόπισε ΥΠΟΨΗΦΙΑ περιστατικά προσωπικά προσβλητικού λόγου "
                "στα email του χρήστη προς τους παραλήπτες τους.")
-OWN_AUDIENCE = ("Τα πεδία to και cc είναι οι παραλήπτες και οι παραλήπτες σε κοινοποίηση κάθε email, και "
-                "το user_addresses οι διευθύνσεις του χρήστη, που είναι ο αποστολέας των TARGET email. "
+OWN_AUDIENCE = ("Τα πεδία to, cc και bcc είναι οι παραλήπτες, οι παραλήπτες σε κοινοποίηση και οι "
+                "παραλήπτες σε κρυφή κοινοποίηση κάθε email, και το user_addresses οι διευθύνσεις του "
+                "χρήστη, που είναι ο αποστολέας των TARGET email. Παραλήπτης είναι όποιος εμφανίζεται σε "
+                "to, cc ή bcc· ένα email προς τον εαυτό του χρήστη με τους πραγματικούς παραλήπτες σε "
+                "bcc απευθύνεται σε αυτούς. "
                 "Επέστρεψε ευρήματα μόνο για λόγο που απευθύνεται σε παραλήπτη του email ή αφορά "
                 "παραλήπτη του email. Λόγος για τρίτο πρόσωπο που δεν είναι παραλήπτης δεν είναι "
                 "εύρημα. Αν δεν είναι σαφές σε ποιον απευθύνεται (για παράδειγμα όταν υπάρχουν πολλοί "
@@ -207,6 +211,7 @@ def build_messages(data):
                 "attachments": len(attachments) if isinstance(attachments, list) else 0,
                 "to": addresses(item, "to"),
                 "cc": addresses(item, "cc"),
+                "bcc": addresses(item, "bcc"),     # empty in extracts made before Bcc was kept
             }
             for field, value in message.items():
                 if isinstance(value, str) and SURROGATE.search(value):
@@ -270,6 +275,7 @@ def payload(msgs, start, left, right, end, sender, users=()):
             "sender_name": m["name"],
             "to": m["to"][:20],
             "cc": m["cc"][:20],
+            "bcc": m["bcc"][:20],
             "text": m["text"][:30000],
         }
         if m["attachments"]:
@@ -671,6 +677,7 @@ def collect_findings(args, msgs, batches):
                     "subject": m["subject"],
                     "to": m["to"],
                     "cc": m["cc"],
+                    "bcc": m["bcc"],
                     "gmail_message_id": m["message_id"],
                     "gmail_thread_id": m["thread_id"],
                     "source_index": m["source_index"],
@@ -731,7 +738,8 @@ def make_report(args, msgs, batches):
             f'<article><h3>{html.escape(f["time"])} · {html.escape(f["category"])}</h3>'
             f'<p><b>Θέμα:</b> {html.escape(f["subject"] or "(χωρίς θέμα)")}</p>'
             f'<p><b>Προς:</b> {html.escape(", ".join(f["to"]) or "—")}'
-            + (f' · <b>Κοιν.:</b> {html.escape(", ".join(f["cc"]))}' if f["cc"] else "") + "</p>"
+            + (f' · <b>Κοιν.:</b> {html.escape(", ".join(f["cc"]))}' if f["cc"] else "")
+            + (f' · <b>Κρυφή κοιν.:</b> {html.escape(", ".join(f["bcc"]))}' if f["bcc"] else "") + "</p>"
             f'<p><b>Message-ID:</b> {html.escape(f["gmail_message_id"] or f["message_key"])} · '
             f'<b>Severity:</b> {html.escape(f["severity"])} · <b>Confidence:</b> {html.escape(f["confidence"])}</p>'
             f'<p>{" · ".join(links)}</p>'
@@ -781,6 +789,7 @@ def make_report(args, msgs, batches):
             f"**Θέμα:** {(f['subject'] or '(χωρίς θέμα)').replace(chr(10), ' ')}  ",
             f"**Προς:** {', '.join(f['to']) or '—'}  ",
             *([f"**Κοινοποίηση:** {', '.join(f['cc'])}  "] if f["cc"] else []),
+            *([f"**Κρυφή κοινοποίηση:** {', '.join(f['bcc'])}  "] if f["bcc"] else []),
             f"**Message-ID:** `{f['gmail_message_id'] or '(μη διαθέσιμο)'}`  ",
             f"**Internal message key:** `{f['message_key']}`  ",
             *([f"**Gmail:** [Άνοιγμα του email]({f['gmail_url']})  "] if f["gmail_url"] else []),

@@ -319,10 +319,12 @@ class TimeTests(unittest.TestCase):
 
 
 def make_email(sender, to, subject, date, thread, body=None, html=None, labels='Inbox',
-               message_id=None, attachment=None):
+               message_id=None, attachment=None, bcc=None):
     msg = EmailMessage()
     msg['From'] = sender
     msg['To'] = to
+    if bcc:
+        msg['Bcc'] = bcc
     msg['Subject'] = subject
     msg['Date'] = date
     msg['Message-ID'] = message_id or f'<{abs(hash((sender, date)))}@example.test>'
@@ -357,7 +359,8 @@ class ExtractTests(unittest.TestCase):
                        body='Πρώτο μήνυμα της Alice.\n', message_id='<a1@example.test>'),
             make_email(ME, ALICE, 'Re: Θέμα συνάντησης', 'Mon, 01 Jan 2024 11:00:00 +0000', '100',
                        body='Η απάντησή μου.\n\nOn Mon, 1 Jan 2024, Alice <alice@example.com> wrote:\n'
-                            '> Πρώτο μήνυμα της Alice.\n', labels='Sent', message_id='<m1@example.test>'),
+                            '> Πρώτο μήνυμα της Alice.\n', labels='Sent', message_id='<m1@example.test>',
+                       bcc='Carol <Carol@Example.net>'),
             make_email(ALICE, ME, 'Re: Θέμα συνάντησης', 'Mon, 01 Jan 2024 12:00:00 +0000', '100',
                        body='Νέο κείμενο.\n\nΣτις Δευ 1 Ιαν 2024, ο/η Me <me@example.org> έγραψε:\n'
                             '> Η απάντησή μου.\n',
@@ -411,6 +414,16 @@ class ExtractTests(unittest.TestCase):
                          ['alice@example.com', 'me@example.org', 'alice@example.com'])
         self.assertEqual([m['time'] for m in thread['messages']],
                          ['2024-01-01T10:00:00Z', '2024-01-01T11:00:00Z', '2024-01-01T12:00:00Z'])
+
+    def test_bcc_of_your_sent_copy_is_kept(self):
+        folder, data = self.extract()
+        mine, = [m for m in data['threads'][1]['messages'] if m['from'] == 'me@example.org']
+        self.assertEqual(mine['bcc'], ['carol@example.net'])
+        others = [m for t in data['threads'] for m in t['messages'] if m is not mine]
+        self.assertTrue(others)
+        self.assertTrue(all(m['bcc'] == [] for m in others))
+        reading = (folder / 'conversation.md').read_text(encoding='utf-8')
+        self.assertEqual(reading.count('Bcc: carol@example.net'), 1)
 
     def test_all_threads_keeps_the_others(self):
         _folder, data = self.extract('--all-threads')

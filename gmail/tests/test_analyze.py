@@ -284,6 +284,35 @@ class AnalyzeTests(TempCase):
         self.assertEqual((f['message_key'], f['quote']), ('m0000001', 'Δεν συμφωνώ'))
         self.assertEqual(read_json(args.output / 'summary.json')['total_sender_messages'], 2)
 
+    def test_bcc_only_recipients_reach_the_model_and_the_finding(self):
+        data = extract()
+        data['threads'][0]['messages'][1].update(to=[ME], bcc=['Alice@Example.com'],
+                                                 text='Αλίκη, είσαι εντελώς ανίκανη.')
+        self.input.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        msgs = mod.build_messages(data)
+        args = self.args(sender=ME, output=self.tmp / 'bcc')
+        args.user_addresses = [ME]
+
+        def flag(payload):
+            keys = [m['key'] for m in payload['messages'] if m['role'] == 'TARGET']
+            return [finding('m0000001', 'εντελώς ανίκανη')] if 'm0000001' in keys else []
+
+        client = FakeClient(flag)
+        with quiet():
+            mod.analyze(args, msgs, client=client)
+        sent = [m for p in client.payloads for m in p['messages'] if m['key'] == 'm0000001']
+        self.assertTrue(sent)
+        self.assertEqual({(tuple(m['to']), tuple(m['bcc'])) for m in sent}, {((ME,), (ALICE,))})
+        self.assertIn('bcc', mod.OWN_INSTRUCTIONS)
+        [f] = read_json(args.output / 'findings.json')
+        self.assertEqual(f['bcc'], [ALICE])
+        self.assertIn('Κρυφή κοιν.', (args.output / 'report.html').read_text(encoding='utf-8'))
+        self.assertIn('Κρυφή κοινοποίηση', (args.output / 'report.md').read_text(encoding='utf-8'))
+
+    def test_an_extract_without_bcc_still_reads(self):
+        msgs = mod.build_messages(extract())
+        self.assertEqual({tuple(m['bcc']) for m in msgs}, {()})
+
     def test_the_own_prompt_changes_only_who_is_addressed(self):
         self.assertNotEqual(mod.OWN_INSTRUCTIONS, mod.INSTRUCTIONS)
         self.assertNotIn(mod.PURPOSE, mod.OWN_INSTRUCTIONS)

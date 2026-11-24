@@ -8,7 +8,7 @@ findings are candidates for human review.
 
 > [!WARNING]
 > **Privacy.** Running an analysis sends the **new text, sender names and addresses, recipient
-> addresses (To, Cc, and yours), subjects and times** of the extracted emails, in batches, to the OpenAI API (see the
+> addresses (To, Cc, Bcc, and yours), subjects and times** of the extracted emails, in batches, to the OpenAI API (see the
 > [main README](../README.md)). Extraction, `--list-senders` and `--report-only` never use the
 > network. The mbox, the extracted folder and the output folder hold private email: keep them
 > out of version control (they are in `.gitignore`).
@@ -86,7 +86,8 @@ python gmail/gmail_analyze.py --input 'gmail-extracted/FOLDER/conversation.json'
 
 Replace `FOLDER` with the folder the extractor printed. Batches default to 15 emails with
 4 neighbouring emails of context on each side (`--batch-size`, `--context`), because emails are
-longer than chat messages. Each email goes to the model with its thread number, subject and recipients (To and Cc),
+longer than chat messages. Each email goes to the model with its thread number, subject and recipients (To, Cc
+and Bcc; Bcc is only in your own saved copy of an email you sent),
 together with your own addresses (the extract's `self`, from the Sent label or `--self`), so
 the model can tell where one conversation ends and the next begins, and whether a sentence is
 addressed to you or to someone else on the email. Language aimed only at another recipient or at a
@@ -95,16 +96,20 @@ recipients), the finding says so in its caveat with a lower confidence.
 
 **Your own emails.** Pass one of your own addresses (marked `(you)` by `--list-senders` in
 the extractor) as `--sender` to analyse what you wrote in the same threads. The model is then
-asked about language in your emails aimed at their recipients (To and Cc); language about
-a third person who is not on the email is not a finding. This prompt has its own version, and the
-cache records the sender, so use a separate `--output`:
+asked about language in your emails aimed at their recipients (To, Cc and Bcc, so an email
+to yourself with the real recipients in Bcc counts); language about a third person who is not
+on the email is not a finding. This prompt has its own version, and the cache records the
+sender, so use a separate `--output`:
 
 ```bash
 python gmail/gmail_analyze.py --input 'gmail-extracted/FOLDER/conversation.json' \
     --sender me@example.org --output gmail-analysis-self --workers 3
 ```
 
-The extract already holds your emails in those threads; there is no need to extract again.
+The extract already holds your emails in those threads. Bcc recipients are kept only by
+extracts made with this version of `gmail_extract.py`; for an older extract, extract again into
+a new `--output-dir` and analyse that (keep using the old extract for an analysis already run
+on it, whose cache is tied to it).
 
 `--gmail-account` selects which signed-in Gmail account the links open: its number in the
 `/mail/u/N/` address (default `0`), or its address. The link is
