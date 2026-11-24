@@ -85,33 +85,43 @@ ATTRIBUTION_END = re.compile(r"(?:\bwrote:|έγραψε[^\n]*:)[ \t]*$")
 ADDRESS = re.compile(r"[^\s<>@\"']+@[^\s<>@\"']+\.[^\s<>@\"']+")
 DATE_WITH_YEAR = re.compile(r"\b(?:19|20)\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b")
 TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
-# Clients without the address start with a weekday: "On Monday, January 1, 2024 ...",
-# "Στις Τρίτη, 5 Μαΐου 2020 ...", "Στις Δευ 1 Ιαν 2024 ...". A sentence like "Στις 10/11/2025
-# στις 10:00, η δασκάλα έγραψε:" does not.
-WEEKDAY_START = re.compile(r"^[ \t]*(?:On|Στις)[ \t]+[^\W\d_]{2,}\.?(?:,|[ \t]+\d)")
-# Yahoo's plain text can continue the attribution's line with the quoted text itself, after a
-# few spaces: "Στις Τρίτη, 5 Μαΐου 2020 στις 10:00, Name έγραψε:   quoted text". The name-first
-# Greek form ends at the date: "Ο/Η Name <a@b> έγραψε στις 1/1/2024: quoted text".
+# Yahoo's plain text can continue the attribution's line with the quoted text itself:
+# "Στις Τρίτη, 5 Μαΐου 2020 στις 10:00, Name έγραψε:   quoted text". The name-first Greek form
+# ends at the date: "Ο/Η Name <a@b> έγραψε στις 1/1/2024: quoted text".
 INLINE_END = re.compile(r"(?:\bwrote|έγραψε(?:\s+στις\s[^\n]{1,40}?)?):([ \t]+)(?=\S)")
+# Quoted text is compared with the earlier emails of the thread by its first characters
+QUOTE_PROBE = 40
 
 
-def is_attribution(block, quoted_next=False, gap=None):
-    """Whether ``block`` has an attribution's structure.
+def normalized(text):
+    """Text with whitespace runs as one space, case-folded, for comparing quotes."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
 
-    An email address is enough. Without one, the block needs a date with a year and a time,
-    and either a weekday start or ``>`` quote lines right after it. Quoted text on the same
-    line (``gap`` is the space before it) needs a weekday start and at least two spaces.
+
+def quotes_earlier(following, earlier):
+    """Whether ``following`` starts with the text of an earlier email (``earlier`` normalized)."""
+    probe = normalized(following)[:QUOTE_PROBE]
+    if len(probe) < 15:
+        return False
+    return any(probe in text for text in earlier)
+
+
+def is_attribution(block, following, earlier=()):
+    """Whether ``block`` is a reply header, given the text that ``following`` it.
+
+    An email address in the header is enough. Without one, wording alone cannot tell a header
+    from a sentence ("On Monday, January 1, 2024 at 10:00, the teacher wrote:"), so the header
+    needs a date with a year and a time, and the text after it must be quoted: ``>`` lines, or
+    the start of an earlier email of the same thread (``earlier``, normalized).
     """
     if ADDRESS.search(block):
         return True
     if not (DATE_WITH_YEAR.search(block) and TIME.search(block)):
         return False
-    if gap is not None:
-        return bool(WEEKDAY_START.match(block)) and len(gap) >= 2
-    return bool(WEEKDAY_START.match(block)) or quoted_next
+    return following.lstrip().startswith(">") or quotes_earlier(following, earlier)
 
 
-def find_attribution(text):
+def find_attribution(text, earlier=()):
     """Offset of the first reply attribution in ``text``, or None."""
     lines = text.split("\n")
     offset = 0
@@ -126,16 +136,17 @@ def find_attribution(text):
             block = "\n".join(block_lines)
             first = block_lines[0]
             if ATTRIBUTION_END.search(block_lines[-1]):
-                after = next((rest for rest in lines[i + span:] if rest.strip()), "")
+                following = "\n".join(lines[i + span:])
                 opens = ATTRIBUTION_START.match(first) or "<" in block and ADDRESS.search(block)
-                if opens and is_attribution(block, after.lstrip().startswith(">")):
+                if opens and is_attribution(block, following, earlier):
                     return offset
                 continue
             inline = INLINE_END.search(block)
             if inline and "\n" not in block[inline.end():] and inline.start() <= 300:
                 head = block[:inline.start(1)]
+                following = "\n".join([block[inline.end():]] + lines[i + span:])
                 opens = ATTRIBUTION_START.match(first) or "<" in head and ADDRESS.search(head)
-                if opens and is_attribution(head, gap=inline.group(1)):
+                if opens and is_attribution(head, following, earlier):
                     return offset
         offset += len(line) + 1
     return None
@@ -162,16 +173,18 @@ FOOTER = re.compile(
 )
 
 
-def strip_quoted(text):
+def strip_quoted(text, earlier=()):
     """The email's own new text, and the number of characters removed.
 
     Removes the quoted earlier messages of a reply, forwarded messages, ``>`` quote lines,
     the signature and app footers. What is left is what the author wrote in this email.
+    ``earlier`` holds the own text of the thread's earlier emails, to recognise quotes under
+    a header without an address (see is_attribution()).
     """
     text = tidy(text)
     original = len(text)
     cut = len(text)
-    attribution = find_attribution(text)
+    attribution = find_attribution(text, [normalized(e) for e in earlier if e and e.strip()])
     if attribution is not None:
         cut = attribution
     for pattern in QUOTE_HEADERS:
@@ -199,9 +212,9 @@ def trim_tail(lines):
 # A signature or disclaimer without a "-- " line is recognised by repetition. A line is part of
 # one when, in at least REPEATED_MIN_EMAILS of the same sender's emails, it is in the block that
 # ends the email *below the author's own text*, as signatures are. Only such a block at the end
-# of an email, of at least REPEATED_MIN_LINES lines, is removed. So a message sent many times
-# on its own (or quoted below other text a few times) is kept, and so are repeated phrases
-# inside the text and short closings.
+# of an email, of at least REPEATED_MIN_LINES lines, is removed. Repeated phrases inside the
+# text and short closings are kept. A request the sender also sent many times below other text
+# would look the same, so the removal is opt-in; the extractor reports what it would remove.
 REPEATED_MIN_EMAILS = 10
 REPEATED_MIN_LINES = 3
 
@@ -217,8 +230,14 @@ def _ending_block(lines, member):
     return start, size
 
 
-def strip_repeated_blocks(emails, min_emails=REPEATED_MIN_EMAILS, min_lines=REPEATED_MIN_LINES):
-    """Remove the signature and disclaimer blocks each sender repeats; returns the emails changed."""
+def strip_repeated_blocks(emails, min_emails=REPEATED_MIN_EMAILS, min_lines=REPEATED_MIN_LINES,
+                          apply=True):
+    """Remove the signature and disclaimer blocks each sender repeats; returns the emails changed.
+
+    Repetition and position cannot always tell a signature from a request sent many times, so
+    this is opt-in (``--strip-repeated``). With ``apply=False`` it only counts the emails it
+    would change.
+    """
     if min_emails <= 0:
         return 0
     by_sender = {}
@@ -245,10 +264,12 @@ def strip_repeated_blocks(emails, min_emails=REPEATED_MIN_EMAILS, min_lines=REPE
             start, size = _ending_block(lines, signature.__contains__)
             if size < min_lines:
                 continue
-            text = tidy("\n".join(trim_tail(lines[:start])))
+            changed += 1
+            if not apply:
+                continue
+            text =tidy("\n".join(trim_tail(lines[:start])))
             item["removed_chars"] += len(item["text"]) - len(text)
             item["text"] = text
-            changed += 1
     return changed
 
 
@@ -438,6 +459,7 @@ def read_email(message, index):
         "in_reply_to": header(message, "In-Reply-To"),
         "labels": labels,
         "body": origin,
+        "original_text": tidy(raw_text),
         "text": text,
         "removed_chars": removed,
         "attachments": attachment_names(message),
@@ -489,6 +511,13 @@ def group_threads(emails):
     ordered = []
     for key, items in threads.items():
         items.sort(key=lambda e: (e["time"] or "9999", e["index"]))
+        # Clean again with the thread's earlier emails, to recognise quotes under a reply
+        # header without an address
+        earlier = []
+        for item in items:
+            if "original_text" in item:
+                item["text"], item["removed_chars"] = strip_quoted(item["original_text"], earlier)
+            earlier.append(item["text"])
         subject = next((e["subject"] for e in items if e["subject"]), "")
         ordered.append({"id": key, "subject": subject, "messages": items})
     ordered.sort(key=lambda t: (t["messages"][0]["time"] or "9999", t["messages"][0]["index"]))
@@ -567,8 +596,10 @@ def main(argv=None):
                         help="your own addresses, comma-separated (default: the senders of emails labelled Sent)")
     parser.add_argument("--all-threads", action="store_true",
                         help="keep every thread, also those without an email from the sender")
-    parser.add_argument("--keep-repeated", action="store_true",
-                        help="keep signature and disclaimer blocks a sender repeats in many emails")
+    parser.add_argument("--strip-repeated", action="store_true",
+                        help="remove blocks that end many of a sender's emails (signatures, "
+                             "disclaimers); check conversation.md first, as a request sent many "
+                             "times would be removed too")
     parser.add_argument("--output-dir", type=Path, default=Path("gmail-extracted"))
     args = parser.parse_args(argv)
 
@@ -583,7 +614,7 @@ def main(argv=None):
             raise ExtractError("No email from this exact address (see --list-senders).")
         extract = build_extract(emails, digest, sender, mine, args.all_threads)
         kept_emails = [e for t in extract["threads"] for e in t["messages"]]
-        repeated = 0 if args.keep_repeated else strip_repeated_blocks(kept_emails)
+        repeated = strip_repeated_blocks(kept_emails, apply=args.strip_repeated)
         folder = args.output_dir / folder_name(sender)
         outputs = [
             (folder / "conversation.json",
@@ -620,9 +651,13 @@ def main(argv=None):
     from_sender = sum(e["from"] == sender for t in extract["threads"] for e in t["messages"])
     print(f"Emails in the mbox: {len(emails)}; threads kept: {len(extract['threads'])}; "
           f"emails kept: {kept} ({from_sender} from the sender)")
-    if repeated:
-        print(f"Repeated signature/disclaimer blocks removed from {repeated} emails "
-              "(--keep-repeated keeps them).")
+    if repeated and args.strip_repeated:
+        print(f"Repeated end blocks (signatures, disclaimers) removed from {repeated} emails; "
+              "each email's full text stays in original_text.")
+    elif repeated:
+        print(f"{repeated} emails end with a block repeated in many of the sender's emails (a "
+              "signature or disclaimer?). Kept. If conversation.md shows it is one, extract "
+              "again with --strip-repeated into a new --output-dir.")
     if not mine:
         print("Note: no email is labelled Sent, so none is marked as yours; pass --self if needed.")
     print(f"Files saved in: {folder.resolve()}")

@@ -81,23 +81,49 @@ class StripQuotedTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.own(text), text)
 
-    def test_attributions_without_an_address_need_a_dated_time(self):
+    def test_attributions_without_an_address_need_a_dated_time_and_quoted_text(self):
         for header in ('On 1/1/2024 10:00, Alice wrote:',
                        'On Monday, January 1, 2024 10:00 AM, Alice wrote:',
                        'Στις Δευ 1 Ιαν 2024 στις 10:00 π.μ., ο/η Alice έγραψε:'):
             with self.subTest(header=header):
                 self.assertEqual(self.own(f'Reply.\n\n{header}\n> old'), 'Reply.')
+                self.assertEqual(self.own(f'Reply.\n\n{header}\nnot quoted'),
+                                 f'Reply.\n\n{header}\nnot quoted')
+        self.assertEqual(self.own('Reply.\n\nOn Monday, Alice wrote:\n> old'),
+                         'Reply.\n\nOn Monday, Alice wrote:')
 
     def test_greek_attribution_starting_with_the_name(self):
         text = 'Απάντηση.\n\nΟ/Η Alice <alice@example.com> έγραψε στις 1/1/2024:\n> παλιό'
         self.assertEqual(self.own(text), 'Απάντηση.')
 
+    EARLIER = ['Old text here, as Alice wrote it in her email.\nMore old text.']
+
     def test_yahoo_attribution_followed_by_the_quote_on_the_same_line(self):
+        # recognised because the text after it is an earlier email of the thread, whatever
+        # the spacing (review of PR 9)
         for header in ('Στις Τρίτη, 5 Μαΐου 2020 στις 10:00, Alice Example έγραψε:',
-                       'On Tuesday, May 5, 2020, 10:00:00 AM GMT+3, Alice Example wrote:'):
-            with self.subTest(header=header):
-                self.assertEqual(self.own(f'Reply.\n\n{header}   Old text here.\nMore old text.'),
-                                 'Reply.')
+                       'On Tuesday, May 5, 2020, 10:00:00 AM GMT+3, Alice Example wrote:',
+                       'On Tuesday, May 5, 2020, 10:00:00 AM GMT+3,\nAlice Example wrote:'):
+            for gap in (' ', '   '):
+                with self.subTest(header=header, gap=gap):
+                    text = f'Reply.\n\n{header}{gap}Old text here, as Alice wrote it\nin her email.'
+                    self.assertEqual(mod.strip_quoted(text, self.EARLIER)[0], 'Reply.')
+
+    def test_header_without_address_and_unknown_quote_is_kept(self):
+        text = 'Reply.\n\nOn Tuesday, May 5, 2020, 10:00 AM, Alice wrote: something else entirely.'
+        self.assertEqual(mod.strip_quoted(text, self.EARLIER)[0], text)
+        text = 'Reply.\n\nOn Tuesday, May 5, 2020, 10:00 AM, Alice wrote:\nSomething else entirely.'
+        self.assertEqual(mod.strip_quoted(text, self.EARLIER)[0], text)
+
+    def test_multiline_weekday_narrative_is_kept(self):
+        # review of PR 9
+        for text in ('On Monday, January 1, 2024 at 10:00,\nthe teacher wrote:\n'
+                     'The child is making progress.',
+                     'Στις Δευτέρα, 1 Ιανουαρίου 2024 στις 10:00,\nη δασκάλα έγραψε:\n'
+                     'Το παιδί προοδεύει.'):
+            with self.subTest(text=text):
+                self.assertEqual(self.own(text), text)
+                self.assertEqual(mod.strip_quoted(text, self.EARLIER)[0], text)
 
     def test_inline_narrative_with_wrote_is_kept(self):
         for text in ('Στις 10/11 πήγα στο σχολείο. Η δασκάλα έγραψε: αυτό δεν ισχύει.',
@@ -186,12 +212,42 @@ class RepeatedBlockTests(unittest.TestCase):
         self.assertEqual(emails[-1]['text'], texts[-1])
         self.assertEqual(emails[0]['text'], 'Message 0.')
 
+    def test_without_apply_it_only_counts(self):
+        # review of PR 9: 12 standalone requests and 10 below other text look like a signature,
+        # so the removal is opt-in; by default the extractor only counts
+        request = 'Please send the documents.\nI asked several times.\nThank you.'
+        texts = [request] * 12 + [f'Intro {i}:\n{request}' for i in range(10)]
+        emails = self.emails(texts)
+        self.assertEqual(mod.strip_repeated_blocks(emails, apply=False), 22)
+        self.assertEqual([e['text'] for e in emails], texts)
+        self.assertTrue(all(e['removed_chars'] == 0 for e in emails))
+
     def test_counted_per_sender_and_can_be_disabled(self):
         mixed = (self.emails([f'A {i}\n{self.SIGNATURE}' for i in range(5)])
                  + self.emails([f'B {i}\n{self.SIGNATURE}' for i in range(5)], 'bob@example.com'))
         self.assertEqual(mod.strip_repeated_blocks(mixed), 0)
         emails = self.emails([f'A {i}\n{self.SIGNATURE}' for i in range(10)])
         self.assertEqual(mod.strip_repeated_blocks(emails, min_emails=0), 0)
+
+
+class ThreadQuoteTests(unittest.TestCase):
+    def item(self, index, time, original):
+        return {'index': index, 'thread_id': 't', 'message_id': f'<{index}@x>', 'time': time,
+                'subject': 's', 'original_text': original, 'text': original, 'removed_chars': 0}
+
+    def test_yahoo_inline_quote_of_an_earlier_email_is_removed(self):
+        first = self.item(0, '2020-05-05T07:00:00Z', 'Please confirm the date of the meeting.')
+        reply = self.item(1, '2020-05-05T09:00:00Z',
+                          'Confirmed.\n\nOn Tuesday, May 5, 2020, 10:00:00 AM GMT+3, Me wrote: '
+                          'Please confirm the date of the meeting.')
+        narrative = self.item(2, '2020-05-06T09:00:00Z',
+                              'On Monday, January 1, 2024 at 10:00, the teacher wrote: '
+                              'the child is making progress.')
+        [thread] = mod.group_threads([reply, narrative, first])
+        self.assertEqual([m['index'] for m in thread['messages']], [0, 1, 2])
+        self.assertEqual(reply['text'], 'Confirmed.')
+        self.assertGreater(reply['removed_chars'], 0)
+        self.assertEqual(narrative['text'], narrative['original_text'])
 
 
 class HtmlTextTests(unittest.TestCase):
@@ -359,6 +415,13 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(second['attachments'], ['σχέδιο.pdf'])
         self.assertEqual(second['message_id'], '<a2@example.test>')
         self.assertEqual(reply['labels'], ['Sent'])
+
+    def test_original_text_is_kept_for_checking(self):
+        _folder, data = self.extract()
+        reply = data['threads'][1]['messages'][1]
+        self.assertEqual(reply['text'], 'Η απάντησή μου.')
+        self.assertIn('> Πρώτο μήνυμα της Alice.', reply['original_text'])
+        self.assertEqual(reply['removed_chars'], len(reply['original_text']) - len(reply['text']))
 
     def test_html_only_email_is_read_as_text(self):
         _folder, data = self.extract()
