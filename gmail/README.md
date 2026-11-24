@@ -53,9 +53,15 @@ wrong. The extractor:
   every thread), with every email of those threads as context, in time order;
 - keeps only each email's **own new text**. Removed: the quoted earlier messages of a reply
   (Gmail's "On … wrote:" and "Στις … έγραψε:", Outlook's "From:/Sent:" and "Από:/Στάλθηκε:"
-  blocks, "-----Original Message-----"), forwarded messages, `>` quote lines, signatures after
-  `-- ` and phone footers ("Sent from my iPhone", "Στάλθηκε από …"). This way every sentence
-  is analysed once, under the person who wrote it;
+  blocks, "-----Original Message-----", Yahoo's attribution with the quote on the same line),
+  forwarded messages, `>` quote lines, signatures after `-- ` and app footers ("Sent from my
+  iPhone", "Στάλθηκε από …", "Yahoo Mail: …"). This way every sentence is analysed once, under
+  the person who wrote it;
+- reports, and with `--strip-repeated` removes, signature and disclaimer blocks without a
+  `-- ` line: a block of at least 3 lines that ends the email, whose lines ended at least 10 of
+  the same sender's emails below the sender's own text. A request the sender sent many times
+  looks the same, so this is opt-in: read `conversation.md` first, then extract again with
+  `--strip-repeated` into a new `--output-dir` if the reported blocks are signatures;
 - uses the plain-text version of an email, or its HTML version as text (without the quoted
   part) when there is no plain text. Attachments are listed by name but not extracted.
 
@@ -63,7 +69,10 @@ It writes `conversation.json` (for the analysis) and `conversation.md` (a readin
 shows exactly the text the model will see) to
 `gmail-extracted/<address> [<hash>]/`. Existing output is never overwritten; on POSIX systems
 the files are owner-only. Read a few emails in `conversation.md` before a real run: if a
-client's quote format was missed, the earlier text would still be there.
+client's quote format was missed, the earlier text would still be there. Each email in
+`conversation.json` also keeps its full `original_text` (quotes, signatures and all; for an
+HTML email, all its visible text, quoted parts included), so every removal can be checked;
+`removed_chars` is its length minus that of `text`. The analysis never sends it.
 
 ## 3. Analyse
 
@@ -108,8 +117,11 @@ leave quoted text in place (the reading copy shows it); everything after a reply
 removed, so text written below the quote (bottom-posting, or answers between quoted lines after
 an "On … wrote:" line) is removed with it; attachments and images are not
 analysed; an email longer than 30,000 characters is cut; a reply header is recognised only with an
-attribution's structure (an email address, or a date with a year and a time), so an unusual
-header without either is kept as text; context at a batch edge can come from
+attribution's structure: an email address, or else a date with a year and a time *and* quoted
+text after it, either `>` lines or the start of an earlier email of the same thread (this is
+how Yahoo's "Στις …, Name έγραψε: quoted text" is found). A header without an address whose
+quoted email is not in the export is kept as text, quote included (`conversation.md` shows
+it); context at a batch edge can come from
 the neighbouring thread (it is marked with its thread number).
 
 CSV fields keep their original values, as in the Skype and Viber analyses: spreadsheet
