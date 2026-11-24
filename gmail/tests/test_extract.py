@@ -92,8 +92,72 @@ class StripQuotedTests(unittest.TestCase):
         text = 'Απάντηση.\n\nΟ/Η Alice <alice@example.com> έγραψε στις 1/1/2024:\n> παλιό'
         self.assertEqual(self.own(text), 'Απάντηση.')
 
+    def test_yahoo_attribution_followed_by_the_quote_on_the_same_line(self):
+        for header in ('Στις Τρίτη, 5 Μαΐου 2020 στις 10:00, Alice Example έγραψε:',
+                       'On Tuesday, May 5, 2020, 10:00:00 AM GMT+3, Alice Example wrote:'):
+            with self.subTest(header=header):
+                self.assertEqual(self.own(f'Reply.\n\n{header}   Old text here.\nMore old text.'),
+                                 'Reply.')
+
+    def test_inline_narrative_with_wrote_is_kept(self):
+        for text in ('Στις 10/11 πήγα στο σχολείο. Η δασκάλα έγραψε: αυτό δεν ισχύει.',
+                     'On Monday at 10:00 the teacher wrote: that is not true.'):
+            with self.subTest(text=text):
+                self.assertEqual(self.own(text), text)
+
+    def test_yahoo_forward_header_on_the_separator_line(self):
+        text = ('Στάλθηκε από το Ταχυδρομείο Yahoo για Android\n\n'
+                '-----Προωθημένο μήνυμα----- Από: "Carol" <carol@example.net> Προς: x\nForwarded text')
+        self.assertEqual(self.own(text), '')
+        self.assertEqual(self.own('New.\n-----Original Message----- From: Carol\nOld'), 'New.')
+
+    def test_yahoo_tagline_footer(self):
+        self.assertEqual(self.own('Text\n\nYahoo Mail: Search, organise, conquer'), 'Text')
+
     def test_windows_line_ends_and_blank_runs_are_tidied(self):
         self.assertEqual(self.own('a\r\n\r\n\r\n\r\nb  \r\n'), 'a\n\nb')
+
+
+class RepeatedBlockTests(unittest.TestCase):
+    SIGNATURE = 'Alice Example\nExample Ltd, Main St 1\nTel. +30 210 0000000'
+    DISCLAIMER = 'This message (including attachments) is confidential. ' * 3
+
+    def emails(self, texts, sender='alice@example.com'):
+        return [{'from': sender, 'text': t, 'removed_chars': 0} for t in texts]
+
+    def test_a_signature_and_disclaimer_repeated_in_many_emails_are_removed(self):
+        texts = [f'Message {i}.\n\n{self.SIGNATURE}\n\n{self.DISCLAIMER}\n\nSent from my iPhone'
+                 for i in range(10)]
+        emails = self.emails(texts)
+        self.assertEqual(mod.strip_repeated_blocks(emails), 10)
+        self.assertEqual([e['text'] for e in emails], [f'Message {i}.' for i in range(10)])
+        self.assertTrue(all(e['removed_chars'] > 0 for e in emails))
+
+    def test_short_repeated_phrases_and_rare_blocks_are_kept(self):
+        texts = [f'Καλημέρα\nText {i}\nΕυχαριστώ' for i in range(12)]
+        texts.append(f'Last.\n{self.SIGNATURE}')
+        emails = self.emails(texts)
+        self.assertEqual(mod.strip_repeated_blocks(emails), 0)
+        self.assertEqual([e['text'] for e in emails], texts)
+
+    def test_a_signature_alone_in_an_email_with_attachments_is_removed(self):
+        texts = [f'Message {i}.\n{self.SIGNATURE}' for i in range(10)] + [self.SIGNATURE]
+        emails = self.emails(texts)
+        mod.strip_repeated_blocks(emails)
+        self.assertEqual(emails[-1]['text'], '')
+
+    def test_a_message_sent_many_times_on_its_own_is_kept(self):
+        request = 'Please send the documents.\nI asked several times.\nThank you.'
+        emails = self.emails([request] * 12 + [f'Other {i}' for i in range(3)])
+        self.assertEqual(mod.strip_repeated_blocks(emails), 0)
+        self.assertEqual(emails[0]['text'], request)
+
+    def test_counted_per_sender_and_can_be_disabled(self):
+        mixed = (self.emails([f'A {i}\n{self.SIGNATURE}' for i in range(5)])
+                 + self.emails([f'B {i}\n{self.SIGNATURE}' for i in range(5)], 'bob@example.com'))
+        self.assertEqual(mod.strip_repeated_blocks(mixed), 0)
+        emails = self.emails([f'A {i}\n{self.SIGNATURE}' for i in range(10)])
+        self.assertEqual(mod.strip_repeated_blocks(emails, min_emails=0), 0)
 
 
 class HtmlTextTests(unittest.TestCase):

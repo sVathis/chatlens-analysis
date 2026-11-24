@@ -53,9 +53,14 @@ wrong. The extractor:
   every thread), with every email of those threads as context, in time order;
 - keeps only each email's **own new text**. Removed: the quoted earlier messages of a reply
   (Gmail's "On … wrote:" and "Στις … έγραψε:", Outlook's "From:/Sent:" and "Από:/Στάλθηκε:"
-  blocks, "-----Original Message-----"), forwarded messages, `>` quote lines, signatures after
-  `-- ` and phone footers ("Sent from my iPhone", "Στάλθηκε από …"). This way every sentence
-  is analysed once, under the person who wrote it;
+  blocks, "-----Original Message-----", Yahoo's attribution with the quote on the same line),
+  forwarded messages, `>` quote lines, signatures after `-- ` and app footers ("Sent from my
+  iPhone", "Στάλθηκε από …", "Yahoo Mail: …"). This way every sentence is analysed once, under
+  the person who wrote it;
+- removes signature and disclaimer blocks without a `-- ` line by repetition: at least 3
+  consecutive lines, each in at least 10 of the same sender's emails and found below other
+  text in at least one of them. Shorter repeated phrases, and a message sent many times on its
+  own, are kept. `--keep-repeated` turns this off;
 - uses the plain-text version of an email, or its HTML version as text (without the quoted
   part) when there is no plain text. Attachments are listed by name but not extracted.
 

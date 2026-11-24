@@ -8,9 +8,9 @@ thread ID (``X-GM-THRID``) groups them back into conversations. This script:
 - keeps the threads in which the selected sender wrote at least one email (all threads with
   ``--all-threads``), with every email of those threads, yours included, as context;
 - keeps only the new text of each email: earlier messages quoted in a reply ("On ... wrote:",
-  "Στις ... έγραψε:", Outlook's "From:/Sent:" block, ``>`` lines), forwarded messages and
-  signatures are removed, so the analysis reads each sentence once and quotes only what the
-  email's own author wrote;
+  "Στις ... έγραψε:", Outlook's "From:/Sent:" block, ``>`` lines), forwarded messages,
+  signatures and disclaimer blocks a sender repeats in many emails are removed, so the analysis
+  reads each sentence once and quotes only what the email's own author wrote;
 - writes ``conversation.json`` (read by ``gmail_analyze.py``) and ``conversation.md`` (a
   reading copy) into a private folder.
 
@@ -86,6 +86,8 @@ ATTRIBUTION_END = re.compile(r"(?:\bwrote:|έγραψε[^\n]*:)[ \t]*$")
 ADDRESS = re.compile(r"[^\s<>@\"']+@[^\s<>@\"']+\.[^\s<>@\"']+")
 DATE_WITH_YEAR = re.compile(r"\b(?:19|20)\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b")
 TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
+# Yahoo's plain text can continue the attribution's line with the quoted text itself
+INLINE_END = re.compile(r"(?:\bwrote:|έγραψε:)[ \t]+\S")
 
 
 def is_attribution(block):
@@ -107,6 +109,10 @@ def find_attribution(text):
             opens = ATTRIBUTION_START.match(block_lines[0]) or "<" in block and ADDRESS.search(block)
             if opens and ATTRIBUTION_END.search(block_lines[-1]) and is_attribution(block):
                 return offset
+        if ATTRIBUTION_START.match(line):
+            inline = INLINE_END.search(line)
+            if inline and inline.start() <= 300 and is_attribution(line[:inline.start()]):
+                return offset
         offset += len(line) + 1
     return None
 
@@ -114,10 +120,10 @@ def find_attribution(text):
 # Lines that start the quoted part of a reply or a forwarded message, besides the attribution.
 # Everything from the first of them on was written by someone else (or earlier) and is removed.
 QUOTE_HEADERS = [
-    # Outlook and others: a separator line
-    re.compile(r"^[ \t]*-{2,}[ \t]*(?:Original Message|Αρχικό μήνυμα)[ \t]*-{2,}[ \t]*$", re.M | re.I),
-    # Forwarded messages (Gmail, English and Greek)
-    re.compile(r"^[ \t]*-{2,}[ \t]*(?:Forwarded message|Προωθημένο μήνυμα)[ \t]*-{2,}[ \t]*$", re.M | re.I),
+    # Separator lines of replies and forwards (Outlook, Gmail, Yahoo; English and Greek). Yahoo
+    # can continue the line with the forwarded header ("-----Προωθημένο μήνυμα----- Από: ...").
+    re.compile(r"^[ \t]*-{2,}[ \t]*(?:Original Message|Αρχικό μήνυμα|Forwarded message|Προωθημένο μήνυμα)"
+               r"[ \t]*-{2,}", re.M | re.I),
     re.compile(r"^[ \t]*Begin forwarded message:[ \t]*$", re.M),
     # Outlook's header block: "From: ..." followed by "Sent:" or "Date:" (or the Greek labels)
     re.compile(r"^[ \t]*\*?(?:From|Από):\*?[ \t][^\n]*\n[ \t]*\*?(?:Sent|Date|Στάλθηκε|Ημερομηνία):\*?[ \t]", re.M),
@@ -127,7 +133,7 @@ SIGNATURE = re.compile(r"^-- ?$", re.M)
 # Footers phone apps add at the end of an email
 FOOTER = re.compile(
     r"^(?:Sent from my \S.*|Sent from (?:Mail|Outlook|Yahoo Mail).*|Get Outlook for \S.*"
-    r"|Στάλθηκε από (?:το|τη|την|το δικό μου) .*|Αποστολή από .*)$",
+    r"|Στάλθηκε από (?:το|τη|την|το δικό μου) .*|Αποστολή από .*|Yahoo Mail: .{0,60})$",
     re.I,
 )
 
@@ -153,12 +159,72 @@ def strip_quoted(text):
     if signature:
         text = text[: signature.start()]
     lines = [line for line in text.split("\n") if not line.lstrip().startswith(">")]
-    # Blank lines, app footers and separator lines (Outlook's "_____" above "From:") at the end
+    text = tidy("\n".join(trim_tail(lines)))
+    return text, original - len(text)
+
+
+def trim_tail(lines):
+    """Drop blank lines, app footers and separator lines (Outlook's "_____") at the end."""
+    lines = list(lines)
     while lines and (not lines[-1].strip() or FOOTER.match(lines[-1].strip())
                      or re.fullmatch(r"[_=\-]{5,}", lines[-1].strip())):
         lines.pop()
-    text = tidy("\n".join(lines))
-    return text, original - len(text)
+    return lines
+
+
+# A signature or disclaimer without a "-- " line is recognised by repetition: a block of at least
+# REPEATED_MIN_LINES consecutive lines, each found in at least REPEATED_MIN_EMAILS of the same
+# sender's emails. Shorter repeated lines (a greeting, a one-line phrase) are kept.
+REPEATED_MIN_EMAILS = 10
+REPEATED_MIN_LINES = 3
+
+
+def strip_repeated_blocks(emails, min_emails=REPEATED_MIN_EMAILS, min_lines=REPEATED_MIN_LINES):
+    """Remove the signature and disclaimer blocks each sender repeats; returns the emails changed."""
+    if min_emails <= 0:
+        return 0
+    seen = {}
+    for item in emails:
+        counts = seen.setdefault(item["from"], Counter())
+        counts.update({line.strip() for line in item["text"].split("\n") if line.strip()})
+    # A signature also follows the author's own text in some emails. A message sent many times
+    # on its own (a repeated request) never does, so it is kept.
+    trailing = {}
+    for item in emails:
+        counts, below = seen[item["from"]], trailing.setdefault(item["from"], set())
+        after_text = False
+        for line in (line.strip() for line in item["text"].split("\n")):
+            if not line:
+                continue
+            if counts[line] < min_emails:
+                after_text = True
+            elif after_text:
+                below.add(line)
+    changed = 0
+    for item in emails:
+        counts = Counter({line: n for line, n in seen[item["from"]].items()
+                          if line in trailing[item["from"]]})
+        lines = item["text"].split("\n")
+        drop, run = set(), []
+        for i, line in enumerate(lines + [None]):
+            key = None if line is None else line.strip()
+            if key == "":
+                if run:
+                    run.append(i)  # a blank line inside a block
+                continue
+            if key is not None and counts[key] >= min_emails:
+                run.append(i)
+                continue
+            if sum(1 for j in run if lines[j].strip()) >= min_lines:
+                drop.update(run)
+            run = []
+        if not drop:
+            continue
+        text = tidy("\n".join(trim_tail(line for j, line in enumerate(lines) if j not in drop)))
+        item["removed_chars"] += len(item["text"]) - len(text)
+        item["text"] = text
+        changed += 1
+    return changed
 
 
 class _HTMLText(HTMLParser):
@@ -476,6 +542,8 @@ def main(argv=None):
                         help="your own addresses, comma-separated (default: the senders of emails labelled Sent)")
     parser.add_argument("--all-threads", action="store_true",
                         help="keep every thread, also those without an email from the sender")
+    parser.add_argument("--keep-repeated", action="store_true",
+                        help="keep signature and disclaimer blocks a sender repeats in many emails")
     parser.add_argument("--output-dir", type=Path, default=Path("gmail-extracted"))
     args = parser.parse_args(argv)
 
@@ -488,7 +556,8 @@ def main(argv=None):
         sender = args.sender.strip().lower()
         if not any(e["from"] == sender for e in emails):
             raise ExtractError("No email from this exact address (see --list-senders).")
-        extract = build_extract(emails, digest, sender, mine, args.all_threads)
+        repeated = 0 if args.keep_repeated else strip_repeated_blocks(emails)
+        extract =build_extract(emails, digest, sender, mine, args.all_threads)
         folder = args.output_dir / folder_name(sender)
         outputs = [
             (folder / "conversation.json",
@@ -525,6 +594,9 @@ def main(argv=None):
     from_sender = sum(e["from"] == sender for t in extract["threads"] for e in t["messages"])
     print(f"Emails in the mbox: {len(emails)}; threads kept: {len(extract['threads'])}; "
           f"emails kept: {kept} ({from_sender} from the sender)")
+    if repeated:
+        print(f"Repeated signature/disclaimer blocks removed from {repeated} emails "
+              "(--keep-repeated keeps them).")
     if not mine:
         print("Note: no email is labelled Sent, so none is marked as yours; pass --self if needed.")
     print(f"Files saved in: {folder.resolve()}")
