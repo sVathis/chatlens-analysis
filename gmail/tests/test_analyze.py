@@ -262,6 +262,36 @@ class AnalyzeTests(TempCase):
         with self.assertRaises(SystemExit), quiet():
             mod.analyze(self.args(batch_size=3), mod.build_messages(extract()), client=FakeClient(list))
 
+    def test_another_senders_emails_use_the_prompt_about_you(self):
+        args, client = self.run_analyze(lambda payload: [])
+        self.assertIs(client.kwargs[0]['instructions'], mod.INSTRUCTIONS)
+        self.assertEqual(read_json(args.output / 'run_config.json')['prompt_version'],
+                         mod.PROMPT_VERSION)
+
+    def test_your_own_emails_use_the_prompt_about_their_recipients(self):
+        def flag_mine(payload):
+            keys = [m['key'] for m in payload['messages'] if m['role'] == 'TARGET']
+            return [finding('m0000001', 'Δεν συμφωνώ')] if 'm0000001' in keys else []
+
+        args, client = self.run_analyze(flag_mine, sender=ME, output=self.tmp / 'own')
+        self.assertTrue(client.kwargs)
+        for kwargs in client.kwargs:
+            self.assertEqual(kwargs['instructions'], mod.OWN_INSTRUCTIONS)
+            self.assertEqual(json.loads(kwargs['input'])['analyze_only_sender_id'], ME)
+        self.assertEqual(read_json(args.output / 'run_config.json')['prompt_version'],
+                         mod.OWN_PROMPT_VERSION)
+        [f] = read_json(args.output / 'findings.json')
+        self.assertEqual((f['message_key'], f['quote']), ('m0000001', 'Δεν συμφωνώ'))
+        self.assertEqual(read_json(args.output / 'summary.json')['total_sender_messages'], 2)
+
+    def test_the_own_prompt_changes_only_who_is_addressed(self):
+        self.assertNotEqual(mod.OWN_INSTRUCTIONS, mod.INSTRUCTIONS)
+        self.assertNotIn(mod.PURPOSE, mod.OWN_INSTRUCTIONS)
+        self.assertNotIn(mod.AUDIENCE, mod.OWN_INSTRUCTIONS)
+        own = mod.OWN_INSTRUCTIONS.replace(mod.OWN_PURPOSE, mod.PURPOSE)
+        self.assertEqual(own.replace(mod.OWN_AUDIENCE, mod.AUDIENCE), mod.INSTRUCTIONS)
+        self.assertIn('user_addresses', mod.OWN_INSTRUCTIONS)
+
     def test_triage_reads_email_findings(self):
         args, _client = self.run_analyze(self.flag_first)
         records, runs = triage_findings.collect([args.output])
@@ -299,6 +329,13 @@ class CommandLineTests(TempCase):
             self.run_main('--input', self.input, '--sender', 'Alice@Example.COM')
         self.assertEqual(fake.call_args[0][0].sender, ALICE)
         self.assertEqual(fake.call_args[0][0].user_addresses, [ME])
+
+    def test_your_own_address_as_sender_is_noted(self):
+        err = io.StringIO()
+        with patch.object(mod, 'analyze') as fake, contextlib.redirect_stderr(err):
+            self.run_main('--input', self.input, '--sender', 'Me@Example.org')
+        self.assertTrue(mod.own_emails(fake.call_args[0][0]))
+        self.assertIn('your own addresses', err.getvalue())
 
 
 if __name__ == '__main__':

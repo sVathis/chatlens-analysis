@@ -93,6 +93,19 @@ addressed to you or to someone else on the email. Language aimed only at another
 third person is not a finding; when it is unclear who is meant (you only in Cc, several
 recipients), the finding says so in its caveat with a lower confidence.
 
+**Your own emails.** Pass one of your own addresses (marked `(you)` by `--list-senders` in
+the extractor) as `--sender` to analyse what you wrote in the same threads. The model is then
+asked about language in your emails aimed at their recipients (To and Cc); language about
+a third person who is not on the email is not a finding. This prompt has its own version, and the
+cache records the sender, so use a separate `--output`:
+
+```bash
+python gmail/gmail_analyze.py --input 'gmail-extracted/FOLDER/conversation.json' \
+    --sender me@example.org --output gmail-analysis-self --workers 3
+```
+
+The extract already holds your emails in those threads; there is no need to extract again.
+
 `--gmail-account` selects which signed-in Gmail account the links open: its number in the
 `/mail/u/N/` address (default `0`), or its address. The link is
 `https://mail.google.com/mail/u/0/#search/rfc822msgid%3A<Message-ID>`: an identifier only,
