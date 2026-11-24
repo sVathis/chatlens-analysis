@@ -101,9 +101,27 @@ class StripQuotedTests(unittest.TestCase):
 
     def test_inline_narrative_with_wrote_is_kept(self):
         for text in ('Στις 10/11 πήγα στο σχολείο. Η δασκάλα έγραψε: αυτό δεν ισχύει.',
-                     'On Monday at 10:00 the teacher wrote: that is not true.'):
+                     'On Monday at 10:00 the teacher wrote: that is not true.',
+                     # complete dates and times (review of PR 9)
+                     'Στις 10/11/2025 στις 10:00, η δασκάλα έγραψε: το παιδί προοδεύει.',
+                     'Στις 10/11/2025 στις 10:00,\nη δασκάλα έγραψε: το παιδί προοδεύει.',
+                     'Στις 10/11/2025 στις 10:00, η δασκάλα έγραψε:\nτο παιδί προοδεύει.',
+                     'On 10/11/2025 at 10:00 the teacher wrote: the child is doing well.',
+                     'Στις Τρίτη, 5 Μαΐου 2020 στις 10:00, η δασκάλα έγραψε: προοδεύει.'):
             with self.subTest(text=text):
                 self.assertEqual(self.own(text), text)
+
+    def test_numeric_date_header_without_address_needs_quote_lines(self):
+        self.assertEqual(self.own('Reply.\n\nOn 1/1/2024 10:00, Alice wrote:\n> old'), 'Reply.')
+        text = 'Reply.\n\nOn 1/1/2024 10:00, Alice wrote:\nnot quoted'
+        self.assertEqual(self.own(text), text)
+
+    def test_name_first_greek_attribution_with_the_quote_on_the_same_line(self):
+        for text in ('Απάντηση.\n\nΟ/Η Alice <alice@example.com> έγραψε στις 1/1/2024: Παλαιό μήνυμα.',
+                     'Απάντηση.\n\nΟ/Η Alice <alice@example.com> έγραψε\nστις 1/1/2024: Παλαιό μήνυμα.',
+                     'Απάντηση.\n\nΟ/Η Alice <alice@example.com> έγραψε στις 1/1/2024 10:00: Παλαιό.'):
+            with self.subTest(text=text):
+                self.assertEqual(self.own(text), 'Απάντηση.')
 
     def test_yahoo_forward_header_on_the_separator_line(self):
         text = ('Στάλθηκε από το Ταχυδρομείο Yahoo για Android\n\n'
@@ -151,6 +169,22 @@ class RepeatedBlockTests(unittest.TestCase):
         emails = self.emails([request] * 12 + [f'Other {i}' for i in range(3)])
         self.assertEqual(mod.strip_repeated_blocks(emails), 0)
         self.assertEqual(emails[0]['text'], request)
+
+    def test_a_repeated_message_quoted_below_other_text_once_is_kept(self):
+        # review of PR 9: one prefixed copy must not turn the message into a signature
+        request = 'Please send the documents.\nI asked several times.\nThank you.'
+        texts = [request] * 11 + [f'Regarding our discussion:\n{request}']
+        emails = self.emails(texts)
+        self.assertEqual(mod.strip_repeated_blocks(emails), 0)
+        self.assertEqual([e['text'] for e in emails], texts)
+
+    def test_a_signature_block_inside_the_text_is_kept(self):
+        texts = [f'Message {i}.\n{self.SIGNATURE}' for i in range(10)]
+        texts.append(f'{self.SIGNATURE}\nA new paragraph below it.')
+        emails = self.emails(texts)
+        mod.strip_repeated_blocks(emails)
+        self.assertEqual(emails[-1]['text'], texts[-1])
+        self.assertEqual(emails[0]['text'], 'Message 0.')
 
     def test_counted_per_sender_and_can_be_disabled(self):
         mixed = (self.emails([f'A {i}\n{self.SIGNATURE}' for i in range(5)])

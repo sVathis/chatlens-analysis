@@ -79,19 +79,36 @@ def tidy(text):
 # A reply's attribution line ("On Mon, 1 Jan 2024 at 10:00, Name <a@b> wrote:", "Στις Δευ 1 Ιαν
 # 2024 στις 10:00, ο/η Name <a@b> έγραψε:", "Ο/Η Name <a@b> έγραψε στις ...:"). It may be wrapped
 # over two lines. Ordinary sentences can also start with "On"/"Στις" and end with "wrote:"/
-# "έγραψε:", so a line counts only with an attribution's structure: an email address, or a
-# date with a year together with a time. See find_attribution().
+# "έγραψε:", so a line counts only with an attribution's structure. See is_attribution().
 ATTRIBUTION_START = re.compile(r"^[ \t]*(?:On|Στις)\b")
 ATTRIBUTION_END = re.compile(r"(?:\bwrote:|έγραψε[^\n]*:)[ \t]*$")
 ADDRESS = re.compile(r"[^\s<>@\"']+@[^\s<>@\"']+\.[^\s<>@\"']+")
 DATE_WITH_YEAR = re.compile(r"\b(?:19|20)\d{2}\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b")
 TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
-# Yahoo's plain text can continue the attribution's line with the quoted text itself
-INLINE_END = re.compile(r"(?:\bwrote:|έγραψε:)[ \t]+\S")
+# Clients without the address start with a weekday: "On Monday, January 1, 2024 ...",
+# "Στις Τρίτη, 5 Μαΐου 2020 ...", "Στις Δευ 1 Ιαν 2024 ...". A sentence like "Στις 10/11/2025
+# στις 10:00, η δασκάλα έγραψε:" does not.
+WEEKDAY_START = re.compile(r"^[ \t]*(?:On|Στις)[ \t]+[^\W\d_]{2,}\.?(?:,|[ \t]+\d)")
+# Yahoo's plain text can continue the attribution's line with the quoted text itself, after a
+# few spaces: "Στις Τρίτη, 5 Μαΐου 2020 στις 10:00, Name έγραψε:   quoted text". The name-first
+# Greek form ends at the date: "Ο/Η Name <a@b> έγραψε στις 1/1/2024: quoted text".
+INLINE_END = re.compile(r"(?:\bwrote|έγραψε(?:\s+στις\s[^\n]{1,40}?)?):([ \t]+)(?=\S)")
 
 
-def is_attribution(block):
-    return bool(ADDRESS.search(block)) or bool(DATE_WITH_YEAR.search(block) and TIME.search(block))
+def is_attribution(block, quoted_next=False, gap=None):
+    """Whether ``block`` has an attribution's structure.
+
+    An email address is enough. Without one, the block needs a date with a year and a time,
+    and either a weekday start or ``>`` quote lines right after it. Quoted text on the same
+    line (``gap`` is the space before it) needs a weekday start and at least two spaces.
+    """
+    if ADDRESS.search(block):
+        return True
+    if not (DATE_WITH_YEAR.search(block) and TIME.search(block)):
+        return False
+    if gap is not None:
+        return bool(WEEKDAY_START.match(block)) and len(gap) >= 2
+    return bool(WEEKDAY_START.match(block)) or quoted_next
 
 
 def find_attribution(text):
@@ -103,16 +120,23 @@ def find_attribution(text):
             block_lines = lines[i:i + span]
             if len(block_lines) < span:
                 break
-            if span == 2 and ATTRIBUTION_END.search(block_lines[0]):
+            if span == 2 and (ATTRIBUTION_END.search(block_lines[0])
+                              or INLINE_END.search(block_lines[0])):
                 break  # a one-line attribution, already tried
             block = "\n".join(block_lines)
-            opens = ATTRIBUTION_START.match(block_lines[0]) or "<" in block and ADDRESS.search(block)
-            if opens and ATTRIBUTION_END.search(block_lines[-1]) and is_attribution(block):
-                return offset
-        if ATTRIBUTION_START.match(line):
-            inline = INLINE_END.search(line)
-            if inline and inline.start() <= 300 and is_attribution(line[:inline.start()]):
-                return offset
+            first = block_lines[0]
+            if ATTRIBUTION_END.search(block_lines[-1]):
+                after = next((rest for rest in lines[i + span:] if rest.strip()), "")
+                opens = ATTRIBUTION_START.match(first) or "<" in block and ADDRESS.search(block)
+                if opens and is_attribution(block, after.lstrip().startswith(">")):
+                    return offset
+                continue
+            inline = INLINE_END.search(block)
+            if inline and "\n" not in block[inline.end():] and inline.start() <= 300:
+                head = block[:inline.start(1)]
+                opens = ATTRIBUTION_START.match(first) or "<" in head and ADDRESS.search(head)
+                if opens and is_attribution(head, gap=inline.group(1)):
+                    return offset
         offset += len(line) + 1
     return None
 
@@ -172,58 +196,59 @@ def trim_tail(lines):
     return lines
 
 
-# A signature or disclaimer without a "-- " line is recognised by repetition: a block of at least
-# REPEATED_MIN_LINES consecutive lines, each found in at least REPEATED_MIN_EMAILS of the same
-# sender's emails. Shorter repeated lines (a greeting, a one-line phrase) are kept.
+# A signature or disclaimer without a "-- " line is recognised by repetition. A line is part of
+# one when, in at least REPEATED_MIN_EMAILS of the same sender's emails, it is in the block that
+# ends the email *below the author's own text*, as signatures are. Only such a block at the end
+# of an email, of at least REPEATED_MIN_LINES lines, is removed. So a message sent many times
+# on its own (or quoted below other text a few times) is kept, and so are repeated phrases
+# inside the text and short closings.
 REPEATED_MIN_EMAILS = 10
 REPEATED_MIN_LINES = 3
+
+
+def _ending_block(lines, member):
+    """Start of the block of ``member`` (and blank) lines that ends ``lines``, and its size."""
+    start, size = len(lines), 0
+    while start and (not lines[start - 1].strip() or member(lines[start - 1].strip())):
+        start -= 1
+        size += bool(lines[start].strip())
+    while start < len(lines) and not lines[start].strip():
+        start += 1
+    return start, size
 
 
 def strip_repeated_blocks(emails, min_emails=REPEATED_MIN_EMAILS, min_lines=REPEATED_MIN_LINES):
     """Remove the signature and disclaimer blocks each sender repeats; returns the emails changed."""
     if min_emails <= 0:
         return 0
-    seen = {}
+    by_sender = {}
     for item in emails:
-        counts = seen.setdefault(item["from"], Counter())
-        counts.update({line.strip() for line in item["text"].split("\n") if line.strip()})
-    # A signature also follows the author's own text in some emails. A message sent many times
-    # on its own (a repeated request) never does, so it is kept.
-    trailing = {}
-    for item in emails:
-        counts, below = seen[item["from"]], trailing.setdefault(item["from"], set())
-        after_text = False
-        for line in (line.strip() for line in item["text"].split("\n")):
-            if not line:
-                continue
-            if counts[line] < min_emails:
-                after_text = True
-            elif after_text:
-                below.add(line)
+        by_sender.setdefault(item["from"], []).append(item)
     changed = 0
-    for item in emails:
-        counts = Counter({line: n for line, n in seen[item["from"]].items()
-                          if line in trailing[item["from"]]})
-        lines = item["text"].split("\n")
-        drop, run = set(), []
-        for i, line in enumerate(lines + [None]):
-            key = None if line is None else line.strip()
-            if key == "":
-                if run:
-                    run.append(i)  # a blank line inside a block
-                continue
-            if key is not None and counts[key] >= min_emails:
-                run.append(i)
-                continue
-            if sum(1 for j in run if lines[j].strip()) >= min_lines:
-                drop.update(run)
-            run = []
-        if not drop:
+    for items in by_sender.values():
+        if len(items) < min_emails:
             continue
-        text = tidy("\n".join(trim_tail(line for j, line in enumerate(lines) if j not in drop)))
-        item["removed_chars"] += len(item["text"]) - len(text)
-        item["text"] = text
-        changed += 1
+        bodies = [trim_tail(item["text"].split("\n")) for item in items]
+        counts = Counter()
+        for lines in bodies:
+            counts.update({line.strip() for line in lines if line.strip()})
+        common = {line for line, n in counts.items() if n >= min_emails}
+        below = Counter()
+        for lines in bodies:
+            start, size = _ending_block(lines, common.__contains__)
+            if size and any(line.strip() for line in lines[:start]):
+                below.update({line.strip() for line in lines[start:] if line.strip()})
+        signature = {line for line, n in below.items() if n >= min_emails}
+        if not signature:
+            continue
+        for item, lines in zip(items, bodies):
+            start, size = _ending_block(lines, signature.__contains__)
+            if size < min_lines:
+                continue
+            text = tidy("\n".join(trim_tail(lines[:start])))
+            item["removed_chars"] += len(item["text"]) - len(text)
+            item["text"] = text
+            changed += 1
     return changed
 
 
@@ -556,8 +581,9 @@ def main(argv=None):
         sender = args.sender.strip().lower()
         if not any(e["from"] == sender for e in emails):
             raise ExtractError("No email from this exact address (see --list-senders).")
-        repeated = 0 if args.keep_repeated else strip_repeated_blocks(emails)
-        extract =build_extract(emails, digest, sender, mine, args.all_threads)
+        extract = build_extract(emails, digest, sender, mine, args.all_threads)
+        kept_emails = [e for t in extract["threads"] for e in t["messages"]]
+        repeated = 0 if args.keep_repeated else strip_repeated_blocks(kept_emails)
         folder = args.output_dir / folder_name(sender)
         outputs = [
             (folder / "conversation.json",
