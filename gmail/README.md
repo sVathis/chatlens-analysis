@@ -70,8 +70,9 @@ shows exactly the text the model will see) to
 `gmail-extracted/<address> [<hash>]/`. Existing output is never overwritten; on POSIX systems
 the files are owner-only. Read a few emails in `conversation.md` before a real run: if a
 client's quote format was missed, the earlier text would still be there. Each email in
-`conversation.json` also keeps its full `original_text` (quotes, signatures and all), so every
-removal can be checked; the analysis never sends it.
+`conversation.json` also keeps its full `original_text` (quotes, signatures and all; for an
+HTML email, all its visible text, quoted parts included), so every removal can be checked;
+`removed_chars` is its length minus that of `text`. The analysis never sends it.
 
 ## 3. Analyse
 

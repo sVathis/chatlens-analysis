@@ -250,6 +250,18 @@ class ThreadQuoteTests(unittest.TestCase):
         self.assertEqual(narrative['text'], narrative['original_text'])
 
 
+class HtmlFullTextTests(unittest.TestCase):
+    def test_keep_quotes_keeps_every_quoted_part(self):
+        markup = ('<p>My reply.</p><blockquote>Earlier correspondence.</blockquote>'
+                  '<div class="gmail_quote">Gmail quote</div><div class="yahoo_quoted">Yahoo quote</div>'
+                  '<div id="divRplyFwdMsg">From: Alice</div><div>Outlook quote</div>'
+                  '<style>p{}</style><script>x()</script>')
+        self.assertEqual(mod.html_to_text(markup), 'My reply.')
+        self.assertEqual(mod.html_to_text(markup, keep_quotes=True),
+                         'My reply.\nEarlier correspondence.\nGmail quote\nYahoo quote\n'
+                         'From: Alice\nOutlook quote')
+
+
 class HtmlTextTests(unittest.TestCase):
     def test_paragraphs_breaks_and_entities(self):
         text = mod.html_to_text('<html><head><style>p{color:red}</style></head><body>'
@@ -428,6 +440,10 @@ class ExtractTests(unittest.TestCase):
         [only] = data['threads'][0]['messages']
         self.assertEqual(only['body'], 'html')
         self.assertEqual(only['text'], 'Μόνο HTML')
+        # review of PR 9: the HTML quote stays in original_text
+        self.assertEqual(only['original_text'], 'Μόνο HTML\nquoted')
+        self.assertEqual(only['removed_chars'], len('\nquoted'))
+        self.assertNotIn('_source', only)
 
     def test_markdown_copy_and_private_files(self):
         folder, _data = self.extract()

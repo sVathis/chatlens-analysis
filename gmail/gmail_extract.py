@@ -280,13 +280,16 @@ class _HTMLText(HTMLParser):
     BREAK = {"br", "hr", "p", "div", "li", "tr", "table", "ul", "ol", "h1", "h2", "h3", "h4",
              "h5", "h6", "pre", "section", "article", "header", "footer"}
     SKIP_TAGS = {"style", "script", "head", "title", "blockquote", "template"}
+    # Skipped as quotes; kept with keep_quotes=True (the full text, for original_text)
+    QUOTE_TAGS = {"blockquote"}
     # Gmail, Yahoo and others wrap the quoted reply in an element with one of these classes
     SKIP_CLASSES = ("gmail_quote", "yahoo_quoted", "moz-cite-prefix", "protonmail_quote")
     # Outlook puts the quoted message after one of these, as siblings, not inside
     STOP_IDS = {"divrplyfwdmsg", "appendonsend", "mail-editor-reference-message-container"}
 
-    def __init__(self):
+    def __init__(self, keep_quotes=False):
         super().__init__(convert_charrefs=True)
+        self.keep_quotes = keep_quotes
         self.parts = []
         self.stack = []  # (tag, skipped) for the open non-void elements
         self.skipping = 0
@@ -296,7 +299,7 @@ class _HTMLText(HTMLParser):
         if self.stopped:
             return
         values = dict(attrs)
-        if (values.get("id") or "").lower() in self.STOP_IDS:
+        if not self.keep_quotes and (values.get("id") or "").lower() in self.STOP_IDS:
             self.stopped = True
             return
         if tag in self.BREAK and not self.skipping:
@@ -304,7 +307,10 @@ class _HTMLText(HTMLParser):
         if tag in self.VOID:
             return
         classes = (values.get("class") or "").lower()
-        skip = tag in self.SKIP_TAGS or any(name in classes for name in self.SKIP_CLASSES)
+        if self.keep_quotes:
+            skip = tag in self.SKIP_TAGS and tag not in self.QUOTE_TAGS
+        else:
+            skip = tag in self.SKIP_TAGS or any(name in classes for name in self.SKIP_CLASSES)
         self.stack.append((tag, skip))
         if skip:
             self.skipping += 1
@@ -336,8 +342,9 @@ class _HTMLText(HTMLParser):
         return re.sub(r"\n+", "\n", "\n".join(lines)).strip("\n")
 
 
-def html_to_text(markup):
-    parser = _HTMLText()
+def html_to_text(markup, keep_quotes=False):
+    """Visible text of HTML; without quoted replies unless ``keep_quotes``."""
+    parser = _HTMLText(keep_quotes)
     parser.feed(markup)
     parser.close()
     return parser.text()
@@ -360,6 +367,17 @@ def part_text(part):
         return payload.decode(charset, "replace")
     except LookupError:
         return payload.decode("utf-8", "replace")
+
+
+def full_body_of(message):
+    """An email's complete text for original_text: as body_of(), but HTML quotes are kept."""
+    text, origin = body_of(message)
+    if origin != "html":
+        return text
+    try:
+        return html_to_text(part_text(message.get_body(preferencelist=("html",))), keep_quotes=True)
+    except (KeyError, AttributeError, ValueError):
+        return text
 
 
 def body_of(message):
@@ -445,7 +463,8 @@ def read_email(message, index):
     name, address = sender[0] if sender else ("", "")
     labels = [label.strip() for label in header(message, "X-Gmail-Labels").split(",") if label.strip()]
     raw_text, origin = body_of(message)
-    text, removed = strip_quoted(raw_text)
+    text, _removed = strip_quoted(raw_text)
+    original = tidy(full_body_of(message))
     item = {
         "index": index,
         "message_id": header(message, "Message-ID"),
@@ -459,9 +478,12 @@ def read_email(message, index):
         "in_reply_to": header(message, "In-Reply-To"),
         "labels": labels,
         "body": origin,
-        "original_text": tidy(raw_text),
+        # The complete text, quotes included (HTML quotes too), so every removal can be checked
+        "original_text": original,
+        # What the cleaning starts from (HTML quotes already skipped); not written out
+        "_source": tidy(raw_text),
         "text": text,
-        "removed_chars": removed,
+        "removed_chars": len(original) - len(text),
         "attachments": attachment_names(message),
     }
     for field, value in item.items():
@@ -515,8 +537,10 @@ def group_threads(emails):
         # header without an address
         earlier = []
         for item in items:
-            if "original_text" in item:
-                item["text"], item["removed_chars"] = strip_quoted(item["original_text"], earlier)
+            source = item.get("_source", item.get("original_text"))
+            if source is not None:
+                item["text"], _removed = strip_quoted(source, earlier)
+                item["removed_chars"] = len(item.get("original_text", source)) - len(item["text"])
             earlier.append(item["text"])
         subject = next((e["subject"] for e in items if e["subject"]), "")
         ordered.append({"id": key, "subject": subject, "messages": items})
@@ -540,6 +564,8 @@ def list_senders(emails, mine):
 
 def build_extract(emails, digest, sender, mine, all_threads=False):
     threads = group_threads(emails)
+    for item in emails:
+        item.pop("_source", None)
     if not all_threads:
         threads = [t for t in threads if any(e["from"] == sender for e in t["messages"])]
     return {
